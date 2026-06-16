@@ -112,6 +112,18 @@ export const useAppStore = defineStore('app', {
       return this.visibleMatches.length;
     },
     dismissedCount: (state): number => state.dismissed.length,
+    /**
+     * Imported jobs surfaced on the board view (EXTR-009 AC1). Hides
+     * `not_interested` postings by default and orders newest-first by
+     * `fetchedAt` so the most recent imports lead the list.
+     */
+    visibleJobs: (state): JobRecord[] =>
+      [...state.jobs]
+        .filter((j) => j.status !== 'not_interested')
+        .sort((a, b) => b.fetchedAt - a.fetchedAt),
+    /** Count of jobs hidden by the `not_interested` status (EXTR-009 AC1). */
+    notInterestedCount: (state): number =>
+      state.jobs.filter((j) => j.status === 'not_interested').length,
     onbProgress: (state): number => (state.onbStep / 4) * 100,
   },
 
@@ -372,6 +384,22 @@ export const useAppStore = defineStore('app', {
       if (extractProgressUnsubscribe) {
         extractProgressUnsubscribe();
         extractProgressUnsubscribe = null;
+      }
+    },
+    /**
+     * Flip every currently-hidden job back to `new` (EXTR-009 AC3). Mirrors
+     * the Starred page's "Restore N hidden" affordance — used after a user
+     * has marked one or more postings `not_interested` and wants them back
+     * in the default view. Each row is persisted via `board:setStatus` so
+     * the change survives a restart; the local cache is updated in lockstep.
+     */
+    async restoreNotInterested() {
+      const bridge = typeof window !== 'undefined' ? window.starBoard : undefined;
+      if (!bridge) return;
+      const toRestore = this.jobs.filter((j) => j.status === 'not_interested');
+      for (const job of toRestore) {
+        await bridge.setStatus({ sourceId: job.sourceId, status: 'new' });
+        job.status = 'new';
       }
     },
     dismissMatch(id: string) {

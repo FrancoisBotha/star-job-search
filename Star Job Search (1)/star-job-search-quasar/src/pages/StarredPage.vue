@@ -3,47 +3,55 @@
     <div class="head">
       <div>
         <h1 class="page-title">Starred matches</h1>
-        <p class="sub">Potential roles Star saved for you. Flag anything off-base and it won't come back.</p>
+        <p class="sub">Roles imported from your tracked job boards. Flag anything off-base and it won't come back.</p>
       </div>
       <q-btn
-        v-if="store.dismissedCount > 0"
+        v-if="store.notInterestedCount > 0"
         outline
         no-caps
         class="restore-btn"
-        :label="`Restore ${store.dismissedCount} hidden`"
-        @click="store.resetDismissed()"
+        :label="`Restore ${store.notInterestedCount} hidden`"
+        @click="store.restoreNotInterested()"
       />
     </div>
 
-    <div v-if="store.matchCount === 0" class="empty">
-      <div class="font-serif empty__title">No starred matches right now</div>
-      <p class="empty__sub">Star will add new ones after the next morning scan.</p>
+    <div v-if="store.visibleJobs.length === 0" class="empty">
+      <div class="font-serif empty__title">No imported jobs yet</div>
+      <p class="empty__sub">Run an extraction from a tracked board to fill this view.</p>
     </div>
 
     <div class="grid">
-      <article v-for="m in store.visibleMatches" :key="m.id" class="tile">
+      <article v-for="j in store.visibleJobs" :key="j.sourceId" class="tile">
         <header class="tile__head">
-          <span class="monogram tile__mono">{{ m.mono }}</span>
+          <span class="monogram tile__mono">{{ initial(j) }}</span>
           <div class="tile__meta">
-            <div class="tile__title">{{ m.role }}</div>
-            <div class="tile__sub">{{ m.co }} · {{ m.loc }}</div>
+            <div class="tile__title">{{ j.title || j.url }}</div>
+            <div class="tile__sub">{{ subtitle(j) }}</div>
           </div>
-          <span class="tile__tag">{{ m.tag }}</span>
+          <span class="tile__tag">{{ j.hostname }}</span>
         </header>
-
-        <div class="tile__score">
-          <StarRating :score="m.score" />
-          <span class="font-mono tile__num">{{ m.score.toFixed(1) }}</span>
-          <span class="tile__salary">{{ m.salary }}</span>
-        </div>
-
-        <div class="tile__why"><span class="star">★</span><span class="why">{{ m.why }}</span></div>
 
         <hr class="hair" />
 
         <footer class="tile__actions">
-          <q-btn unelevated color="primary" no-caps class="col-grow" label="Open match" @click="goJob" />
-          <q-btn outline no-caps class="dismiss" label="Not interested" @click="store.dismissMatch(m.id)" />
+          <q-btn
+            v-if="j.status === 'not_interested'"
+            outline
+            no-caps
+            class="col-grow"
+            label="Restore"
+            @click="store.setJobStatus({ sourceId: j.sourceId, status: 'new' })"
+          />
+          <template v-else>
+            <q-btn unelevated color="primary" no-caps class="col-grow" label="Open" @click="store.openJob(j.url)" />
+            <q-btn
+              outline
+              no-caps
+              class="dismiss"
+              label="Not interested"
+              @click="store.setJobStatus({ sourceId: j.sourceId, status: 'not_interested' })"
+            />
+          </template>
         </footer>
       </article>
     </div>
@@ -51,13 +59,24 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from 'vue-router';
-import StarRating from 'components/StarRating.vue';
+import { onMounted } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
+import type { JobRecord } from 'src/types/models';
 
 const store = useAppStore();
-const router = useRouter();
-const goJob = () => router.push({ name: 'jobdetail' });
+
+function initial(j: JobRecord): string {
+  const src = j.company || j.title || j.hostname || '?';
+  return src.trim().charAt(0).toUpperCase() || '?';
+}
+
+function subtitle(j: JobRecord): string {
+  return [j.company, j.location].filter(Boolean).join(' · ') || j.hostname;
+}
+
+onMounted(async () => {
+  await store.listJobs();
+});
 </script>
 
 <style scoped lang="scss">
@@ -84,7 +103,6 @@ const goJob = () => router.push({ name: 'jobdetail' });
   &__head { display: flex; align-items: flex-start; gap: 12px; }
   &__mono { width: 42px; height: 42px; font-size: 17px; }
   &__meta { flex: 1; min-width: 0; }
-  // Clamp so dividers/buttons align across tiles regardless of text length
   &__title {
     font-size: 15.5px; font-weight: 700; line-height: 1.25;
     min-height: 39px;
@@ -96,13 +114,6 @@ const goJob = () => router.push({ name: 'jobdetail' });
     display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   &__tag { font: 500 10px/1 var(--font-mono); color: var(--olive-text); background: var(--olive-tint); padding: 4px 7px; border-radius: 5px; flex-shrink: 0; }
-  &__score { display: flex; align-items: center; gap: 8px; }
-  &__num { font-weight: 600; font-size: 11px; color: var(--text-3); }
-  &__salary { margin-left: auto; font: 600 12.5px/1 var(--font-ui); color: var(--text-2); }
-  &__why { font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; min-height: 16px;
-    .star { color: var(--accent); flex-shrink: 0; }
-    .why { overflow: hidden; text-overflow: ellipsis; }
-  }
   &__actions { display: flex; gap: 9px; }
 }
 .col-grow { flex: 1; }
