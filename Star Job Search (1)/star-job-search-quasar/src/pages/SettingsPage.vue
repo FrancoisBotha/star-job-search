@@ -10,12 +10,32 @@
 
       <div class="card">
         <div class="eyebrow lbl">OpenRouter API key</div>
-        <div class="key-row">
+
+        <!-- Saved-key status row (LLM-005 AC1): shows the masked key on file
+             when present, plus a Clear button. The raw key is never echoed
+             back from storage — only the masked form supplied by main. -->
+        <div v-if="store.apiKeyStatus.present" class="key-status">
           <div class="key-box">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#bcb6a6" stroke-width="1.6"><rect x="3" y="7" width="10" height="7" rx="1.5" /><path d="M5 7V5a3 3 0 0 1 6 0v2" /></svg>
-            <span class="font-mono key-box__val">{{ store.keyDisplay }}</span>
+            <span class="font-mono key-box__val">Key on file · {{ store.apiKeyStatus.masked }}</span>
           </div>
-          <q-btn outline no-caps class="ghost" :label="store.keyVisible ? 'Hide' : 'Show'" @click="store.toggleKey()" />
+          <q-btn outline no-caps class="ghost" label="Clear" @click="onClear" />
+        </div>
+
+        <!-- In-progress input the user is typing. Show/Hide flips the input
+             type between password and text — it operates on the local
+             `keyDraft` ref ONLY (LLM-005 AC3), never on storage. -->
+        <div class="key-row">
+          <q-input
+            v-model="keyDraft"
+            outlined dense
+            class="key-row__input"
+            :type="keyVisible ? 'text' : 'password'"
+            placeholder="sk-or-v1-…"
+            autocomplete="off"
+          />
+          <q-btn outline no-caps class="ghost" :label="keyVisible ? 'Hide' : 'Show'" @click="keyVisible = !keyVisible" />
+          <q-btn unelevated color="dark" no-caps label="Save" :disable="!keyDraft.trim()" @click="onSave" />
         </div>
         <div class="hint">Get a key at <span class="link">openrouter.ai/keys</span></div>
 
@@ -23,8 +43,20 @@
         <q-select v-model="model" :options="models" outlined dense class="field" />
 
         <div class="test">
-          <q-btn unelevated color="dark" no-caps label="Test connection" @click="store.testConnection()" />
-          <span v-if="store.tested" class="test__ok"><span class="test__dot" />Connected · 312 models available</span>
+          <q-btn
+            unelevated
+            color="dark"
+            no-caps
+            :loading="store.connectionStatus === 'testing'"
+            label="Test connection"
+            @click="store.testConnection()"
+          />
+          <span v-if="store.connectionStatus === 'ok'" class="test__ok">
+            <span class="test__dot" />Connected · {{ store.connectionModelCount }} models available
+          </span>
+          <span v-else-if="store.connectionStatus === 'error'" class="test__err">
+            <span class="test__dot test__dot--err" />{{ connectionMessage }}
+          </span>
         </div>
       </div>
 
@@ -126,15 +158,53 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
 
 const store = useAppStore();
 
-// Pull the persisted Job-sites list from main so the card reflects what
-// survived the last restart (BRWSR-003 AC2 / AC5).
+// Local-only state for the in-progress key the user is typing. The raw key
+// never round-trips through the store / storage (LLM-005 AC3).
+const keyDraft = ref('');
+const keyVisible = ref(false);
+
 onMounted(() => {
+  // BRWSR-003 AC2/AC5 — persisted Job-sites list.
   void store.hydrateSites();
+  // LLM-005 AC1 — pull the masked OpenRouter key status so the row reflects
+  // whether a key survived the last restart.
+  void store.hydrateApiKeyStatus();
+});
+
+async function onSave() {
+  const draft = keyDraft.value.trim();
+  if (!draft) return;
+  await store.saveApiKey(draft);
+  keyDraft.value = '';
+  keyVisible.value = false;
+}
+
+async function onClear() {
+  await store.clearApiKey();
+}
+
+// LLM-005 AC2 — branch on the LLM-002 catalogue error codes so the UI shows
+// a specific message per code rather than a generic failure string.
+const connectionMessage = computed(() => {
+  const err = store.connectionError;
+  if (!err) return '';
+  switch (err.code) {
+    case 'NO_API_KEY':
+      return 'No API key — save one above and try again.';
+    case 'AUTH_ERROR':
+      return 'Authentication failed — check your OpenRouter key.';
+    case 'RATE_LIMITED':
+      return 'Rate limited by OpenRouter — wait a moment and retry.';
+    case 'NETWORK_ERROR':
+      return 'Network error — could not reach OpenRouter.';
+    default:
+      return err.message || 'Connection failed.';
+  }
 });
 
 const model = ref('anthropic/claude-3.5-sonnet');
@@ -159,7 +229,9 @@ const showAbout = ref(false);
 .lbl { margin-bottom: 9px; }
 .lbl:not(:first-child) { margin-top: 18px; }
 
-.key-row { display: flex; gap: 9px; margin-bottom: 7px; }
+.key-status { display: flex; gap: 9px; margin-bottom: 9px; }
+.key-row { display: flex; gap: 9px; margin-bottom: 7px; align-items: center; }
+.key-row__input { flex: 1; }
 .key-box { flex: 1; display: flex; align-items: center; gap: 10px; height: 44px; background: var(--rail); border: 1px solid var(--input-border); border-radius: 9px; padding: 0 13px; }
 .key-box__val { font-size: 13px; color: #3a3530; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hint { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
@@ -167,9 +239,11 @@ const showAbout = ref(false);
 .field { margin-bottom: 4px; }
 .ghost { color: var(--text-2); border-color: var(--border-strong); }
 
-.test { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.test { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 .test__ok { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px/1 var(--font-ui); color: var(--olive-text); }
+.test__err { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px/1.3 var(--font-ui); color: var(--negative); }
 .test__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--positive, #3f7a52); }
+.test__dot--err { background: var(--negative); }
 
 .srow { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid var(--hair-light); }
 .srow:last-child { border-bottom: 0; }

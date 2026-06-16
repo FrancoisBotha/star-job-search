@@ -19,16 +19,15 @@ interface ModelsError {
   message: string;
 }
 
+export type ConnectionStatus = 'idle' | 'testing' | 'ok' | 'error';
+
 interface AppState {
   filter: AppFilter;
   tailorTab: TailorTab;
-  keyVisible: boolean;
-  /**
-   * Legacy "Test connection" flag from the pre-LLM mockup. Kept as a no-op
-   * compat shim so the existing SettingsPage template still type-checks; the
-   * real connection state is now `modelsLoaded` / `modelsError`.
-   */
-  tested: boolean;
+  /** Last "Test connection" outcome from a real catalogue fetch (LLM-005). */
+  connectionStatus: ConnectionStatus;
+  connectionModelCount: number;
+  connectionError: ModelsError | null;
   /** Masked OpenRouter API key status mirrored from `apiKey:getStatus` (LLM-001). */
   apiKeyStatus: StarApiKeyStatus;
   /** Enriched OpenRouter catalogue produced by deriveCatalogue() (LLM-002 + LLM-004). */
@@ -52,8 +51,9 @@ export const useAppStore = defineStore('app', {
   state: (): AppState => ({
     filter: 'All',
     tailorTab: 'cv',
-    keyVisible: false,
-    tested: false,
+    connectionStatus: 'idle',
+    connectionModelCount: 0,
+    connectionError: null,
     apiKeyStatus: { present: false, masked: null },
     models: [],
     modelsLoading: false,
@@ -77,15 +77,6 @@ export const useAppStore = defineStore('app', {
       return this.visibleMatches.length;
     },
     dismissedCount: (state): number => state.dismissed.length,
-    /**
-     * Masked-or-placeholder string shown in the Settings key card. The raw
-     * key never crosses the IPC boundary (LLM-001), so "visible" still only
-     * means we render the masked form supplied by main.
-     */
-    keyDisplay: (state): string => {
-      if (!state.apiKeyStatus.present) return 'sk-or-v1-' + '•'.repeat(24);
-      return state.apiKeyStatus.masked ?? 'sk-or-v1-' + '•'.repeat(24);
-    },
     onbProgress: (state): number => (state.onbStep / 4) * 100,
   },
 
@@ -93,16 +84,37 @@ export const useAppStore = defineStore('app', {
     setFilter(f: AppFilter) {
       this.filter = f;
     },
-    toggleKey() {
-      this.keyVisible = !this.keyVisible;
-    },
     /**
-     * Legacy "Test connection" action from the pre-LLM mockup, kept so the
-     * SettingsPage template keeps compiling. The real connection check is
-     * now `listModels()` — wiring will land in a follow-up ticket.
+     * Real "Test connection" — invokes `llm:listModels` via the same bridge
+     * the catalogue picker uses, and stores the outcome as a tri-state. On
+     * success exposes the model count so the UI can show "Connected · N
+     * models available". On failure surfaces the LLM-002 error code verbatim
+     * so the UI can render a specific message per NO_API_KEY / AUTH /
+     * RATE_LIMITED / NETWORK without parsing exception text.
      */
-    testConnection() {
-      this.tested = true;
+    async testConnection() {
+      const bridge = typeof window !== 'undefined' ? window.starModels : undefined;
+      if (!bridge) return;
+      this.connectionStatus = 'testing';
+      this.connectionError = null;
+      try {
+        const result = await bridge.list();
+        if (result.ok) {
+          this.connectionStatus = 'ok';
+          this.connectionModelCount = result.models.length;
+        } else {
+          this.connectionStatus = 'error';
+          this.connectionError = { code: result.code, message: result.message };
+          this.connectionModelCount = 0;
+        }
+      } catch (err) {
+        this.connectionStatus = 'error';
+        this.connectionError = {
+          code: 'NETWORK_ERROR',
+          message: err instanceof Error ? err.message : 'network error',
+        };
+        this.connectionModelCount = 0;
+      }
     },
     /**
      * Pull the masked OpenRouter API key status from main via `apiKey:getStatus`.
