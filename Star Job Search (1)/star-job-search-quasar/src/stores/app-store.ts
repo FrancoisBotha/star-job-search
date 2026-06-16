@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
-import { MATCHES, SAMPLE_API_KEY } from 'src/data/sample';
+import { MATCHES } from 'src/data/sample';
+import { deriveCatalogue, type DerivedModel } from 'src/data/orModels';
 import type { AppStatus, Match } from 'src/types/models';
 
 export type AppFilter = 'All' | AppStatus;
@@ -13,12 +14,30 @@ export type TailorTab = 'cv' | 'letter';
  */
 export type Site = StarSite;
 
+interface ModelsError {
+  code: StarModelsErrorCode;
+  message: string;
+}
+
 interface AppState {
   filter: AppFilter;
   tailorTab: TailorTab;
   keyVisible: boolean;
-  apiKey: string;
+  /**
+   * Legacy "Test connection" flag from the pre-LLM mockup. Kept as a no-op
+   * compat shim so the existing SettingsPage template still type-checks; the
+   * real connection state is now `modelsLoaded` / `modelsError`.
+   */
   tested: boolean;
+  /** Masked OpenRouter API key status mirrored from `apiKey:getStatus` (LLM-001). */
+  apiKeyStatus: StarApiKeyStatus;
+  /** Enriched OpenRouter catalogue produced by deriveCatalogue() (LLM-002 + LLM-004). */
+  models: DerivedModel[];
+  modelsLoading: boolean;
+  modelsLoaded: boolean;
+  modelsError: ModelsError | null;
+  /** User's short list of preferred model slugs mirrored from main (LLM-003). */
+  preferredModels: StarPreferredModel[];
   sites: Site[];
   siteDraft: string;
   dismissed: string[];
@@ -34,8 +53,13 @@ export const useAppStore = defineStore('app', {
     filter: 'All',
     tailorTab: 'cv',
     keyVisible: false,
-    apiKey: SAMPLE_API_KEY,
     tested: false,
+    apiKeyStatus: { present: false, masked: null },
+    models: [],
+    modelsLoading: false,
+    modelsLoaded: false,
+    modelsError: null,
+    preferredModels: [],
     sites: [],
     siteDraft: '',
     dismissed: [],
@@ -53,8 +77,15 @@ export const useAppStore = defineStore('app', {
       return this.visibleMatches.length;
     },
     dismissedCount: (state): number => state.dismissed.length,
-    keyDisplay: (state): string =>
-      state.keyVisible ? state.apiKey : 'sk-or-v1-' + '•'.repeat(24),
+    /**
+     * Masked-or-placeholder string shown in the Settings key card. The raw
+     * key never crosses the IPC boundary (LLM-001), so "visible" still only
+     * means we render the masked form supplied by main.
+     */
+    keyDisplay: (state): string => {
+      if (!state.apiKeyStatus.present) return 'sk-or-v1-' + '•'.repeat(24);
+      return state.apiKeyStatus.masked ?? 'sk-or-v1-' + '•'.repeat(24);
+    },
     onbProgress: (state): number => (state.onbStep / 4) * 100,
   },
 
@@ -65,8 +96,104 @@ export const useAppStore = defineStore('app', {
     toggleKey() {
       this.keyVisible = !this.keyVisible;
     },
+    /**
+     * Legacy "Test connection" action from the pre-LLM mockup, kept so the
+     * SettingsPage template keeps compiling. The real connection check is
+     * now `listModels()` — wiring will land in a follow-up ticket.
+     */
     testConnection() {
       this.tested = true;
+    },
+    /**
+     * Pull the masked OpenRouter API key status from main via `apiKey:getStatus`.
+     * No-ops when the preload bridge is absent (browser SPA build), mirroring
+     * the [[hydrateSites]] pattern.
+     */
+    async hydrateApiKeyStatus() {
+      const bridge = typeof window !== 'undefined' ? window.starApiKey : undefined;
+      if (!bridge) return;
+      this.apiKeyStatus = await bridge.getStatus();
+    },
+    /**
+     * Save the raw key via `apiKey:save`. The raw key is consumed by main and
+     * never persisted in renderer state; only the returned masked status is
+     * mirrored locally.
+     */
+    async saveApiKey(rawKey: string) {
+      const bridge = typeof window !== 'undefined' ? window.starApiKey : undefined;
+      if (!bridge) return;
+      this.apiKeyStatus = await bridge.save(rawKey);
+    },
+    /**
+     * Forget the saved key via `apiKey:clear`. Resets the cached status to
+     * `{ present: false, masked: null }` so the UI reflects the cleared state.
+     */
+    async clearApiKey() {
+      const bridge = typeof window !== 'undefined' ? window.starApiKey : undefined;
+      if (!bridge) return;
+      await bridge.clear();
+      this.apiKeyStatus = { present: false, masked: null };
+    },
+    /**
+     * Fetch the OpenRouter model catalogue via `llm:listModels`. Manages the
+     * loading / loaded / error tri-state so the Settings model picker can
+     * render a spinner, the enriched list, or a stable error code without
+     * branching on exception messages.
+     */
+    async listModels() {
+      const bridge = typeof window !== 'undefined' ? window.starModels : undefined;
+      if (!bridge) return;
+      this.modelsLoading = true;
+      this.modelsError = null;
+      try {
+        const result = await bridge.list();
+        if (result.ok) {
+          this.models = deriveCatalogue(result.models);
+          this.modelsLoaded = true;
+        } else {
+          this.models = [];
+          this.modelsError = { code: result.code, message: result.message };
+          this.modelsLoaded = false;
+        }
+      } finally {
+        this.modelsLoading = false;
+      }
+    },
+    /**
+     * Pull the persisted preferred-model list from main via `preferredModels:list`.
+     */
+    async hydratePreferredModels() {
+      const bridge = typeof window !== 'undefined' ? window.starPreferredModels : undefined;
+      if (!bridge) return;
+      this.preferredModels = await bridge.list();
+    },
+    /**
+     * Append a model slug to the preferred list via `preferredModels:add`.
+     * Returns the tagged-union result verbatim so the caller can branch on
+     * `EMPTY_SLUG` / `DUPLICATE` / `LIMIT_REACHED` without losing the code.
+     * When the bridge is absent (browser SPA build) returns a synthetic
+     * ok-false result so the caller still gets a defined value.
+     */
+    async addPreferredModel(slug: string): Promise<StarPreferredModelsAddResult> {
+      const bridge = typeof window !== 'undefined' ? window.starPreferredModels : undefined;
+      if (!bridge) {
+        return { ok: false, code: 'EMPTY_SLUG', message: 'Preferred-models bridge unavailable' };
+      }
+      const result = await bridge.add(slug);
+      if (result.ok) this.preferredModels = result.models;
+      return result;
+    },
+    /** Remove a slug via `preferredModels:remove` and refresh state. */
+    async removePreferredModel(slug: string) {
+      const bridge = typeof window !== 'undefined' ? window.starPreferredModels : undefined;
+      if (!bridge) return;
+      this.preferredModels = await bridge.remove(slug);
+    },
+    /** Promote a slug to default via `preferredModels:setDefault` and refresh state. */
+    async setDefaultPreferredModel(slug: string) {
+      const bridge = typeof window !== 'undefined' ? window.starPreferredModels : undefined;
+      if (!bridge) return;
+      this.preferredModels = await bridge.setDefault(slug);
     },
     /**
      * Pull the persisted sites list from main via the `sites:list` IPC
