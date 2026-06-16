@@ -3,11 +3,12 @@
  * Opens the app in a frameless 1320×880 window — the design's native size —
  * with its own in-app title bar and window controls (see MainLayout.vue).
  */
-import { app, BrowserWindow, Menu, ipcMain } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, safeStorage } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJobBrowser } from './browser-surface';
 import { createSitesStore, openSitesDatabase, registerSitesIpc } from './sites';
+import { createApiKeyStore, registerApiKeyIpc } from './apiKey';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -60,6 +61,14 @@ function createWindow() {
   // OS-standard userData dir so it survives app restarts (FR-002).
   const sitesDb = openSitesDatabase(path.join(app.getPath('userData'), 'star.db'));
   registerSitesIpc(ipcMain, createSitesStore(sitesDb));
+
+  // Wire the OpenRouter API key store + IPC (LLM-001). The key is encrypted
+  // with safeStorage and the blob lives next to the SQLite DB under userData.
+  const apiKeyStore = createApiKeyStore({
+    safeStorage,
+    filePath: path.join(app.getPath('userData'), 'openrouter-key.bin'),
+  });
+  registerApiKeyIpc(ipcMain, apiKeyStore);
 
   // Keep the renderer's maximize control in sync with the real window state.
   const emitMaximized = () =>

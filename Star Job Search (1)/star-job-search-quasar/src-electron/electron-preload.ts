@@ -44,3 +44,11 @@ contextBridge.exposeInMainWorld('starSites', {
   add: (input: AddSiteInput) => ipcRenderer.invoke('sites:add', input),
   remove: (id: string) => ipcRenderer.invoke('sites:remove', id),
 });
+
+// OpenRouter API key bridge (LLM-001). The raw key never crosses this
+// boundary — save/getStatus return only { present, masked }.
+contextBridge.exposeInMainWorld('starApiKey', {
+  save: (rawKey: string) => ipcRenderer.invoke('apiKey:save', rawKey),
+  getStatus: () => ipcRenderer.invoke('apiKey:getStatus'),
+  clear: () => ipcRenderer.invoke('apiKey:clear'),
+});

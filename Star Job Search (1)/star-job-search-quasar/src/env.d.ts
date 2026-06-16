@@ -41,8 +41,22 @@ interface StarSitesApi {
   remove: (id: string) => Promise<void>;
 }
 
+/** Masked status payload returned by the apiKey:* IPC channels (LLM-001). */
+interface StarApiKeyStatus {
+  present: boolean;
+  masked: string | null;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the OpenRouter API key. */
+interface StarApiKeyApi {
+  save: (rawKey: string) => Promise<StarApiKeyStatus>;
+  getStatus: () => Promise<StarApiKeyStatus>;
+  clear: () => Promise<void>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
   starSites?: StarSitesApi;
+  starApiKey?: StarApiKeyApi;
 }
