@@ -130,6 +130,7 @@ const TITLES: Record<string, string> = {
   starred: 'Starred',
   applications: 'Applications',
   profile: 'Profile',
+  help: 'Help',
   settings: 'Settings',
   jobdetail: 'Senior Product Designer',
   tailor: 'Tailoring',
@@ -143,6 +144,7 @@ const ic = {
   list: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="3" y1="4" x2="13" y2="4"/><line x1="3" y1="8" x2="13" y2="8"/><line x1="3" y1="12" x2="13" y2="12"/></svg>',
   user: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="5.5" r="2.6"/><path d="M3 13c0-2.7 2.2-4.4 5-4.4s5 1.7 5 4.4"/></svg>',
   settings: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="5" r="1.6"/><line x1="7" y1="5" x2="14" y2="5"/><line x1="2" y1="5" x2="3.4" y2="5"/><circle cx="11" cy="11" r="1.6"/><line x1="2" y1="11" x2="9" y2="11"/><line x1="12.6" y1="11" x2="14" y2="11"/></svg>',
+  help: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M6.3 6.1a1.8 1.8 0 0 1 3.4.6c0 1.2-1.7 1.4-1.7 2.4"/><circle cx="8" cy="11.4" r="0.55" fill="currentColor" stroke="none"/></svg>',
 };
 
 const primaryNav = computed(() => [
@@ -153,6 +155,7 @@ const primaryNav = computed(() => [
 ]);
 const setupNav = [
   { name: 'profile', label: 'Profile', icon: ic.user },
+  { name: 'help', label: 'Help', icon: ic.help },
   { name: 'settings', label: 'Settings', icon: ic.settings },
 ];
 </script>

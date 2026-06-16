@@ -87,8 +87,41 @@
         </div>
       </div>
 
+      <!-- About -->
+      <h2 class="section-title sec">About</h2>
+      <div class="card card--rows">
+        <div class="srow">
+          <div>
+            <div class="srow__title">Star Job Search</div>
+            <div class="srow__sub">Version 0.1.0</div>
+          </div>
+          <q-btn outline no-caps class="ghost" label="About" @click="showAbout = true" />
+        </div>
+      </div>
+
       <q-btn unelevated color="primary" no-caps class="save" label="Save settings" />
     </div>
+
+    <!-- About dialog -->
+    <q-dialog v-model="showAbout">
+      <q-card class="about">
+        <div class="about__brand">
+          <span class="about__star font-serif">★</span>
+          <div>
+            <div class="about__name font-serif">Star Job Search</div>
+            <div class="about__ver font-mono">Version 0.1.0</div>
+          </div>
+        </div>
+        <p class="about__desc">
+          Automated job search with star match scoring, CV &amp; cover-letter tailoring, and
+          application tracking.
+        </p>
+        <div class="about__meta font-mono">Built with Vue 3 · Quasar · Electron</div>
+        <div class="about__actions">
+          <q-btn v-close-popup unelevated color="primary" no-caps label="Close" />
+        </div>
+      </q-card>
+    </q-dialog>
   </div>
 </template>
 
@@ -104,6 +137,7 @@ const frequency = ref('Every morning');
 const frequencies = ['Every morning', 'Every 6 hours', 'Hourly', 'Manual only'];
 const notifyStrong = ref(true);
 const autoDraft = ref(false);
+const showAbout = ref(false);
 </script>
 
 <style scoped lang="scss">
@@ -152,4 +186,19 @@ const autoDraft = ref(false);
 .backup__sub { font-size: 12px; color: var(--muted); margin-top: 5px; }
 
 .save { margin-top: 28px; }
+
+.about {
+  width: 380px;
+  max-width: 90vw;
+  padding: 26px;
+  border-radius: 16px;
+  background: var(--bg);
+}
+.about__brand { display: flex; align-items: center; gap: 13px; }
+.about__star { font-size: 30px; line-height: 1; color: var(--accent); }
+.about__name { font-size: 24px; line-height: 1.1; }
+.about__ver { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.about__desc { font-size: 13px; color: var(--text-2); line-height: 1.55; margin: 18px 0 14px; }
+.about__meta { font-size: 11.5px; color: var(--faint); letter-spacing: 0.02em; }
+.about__actions { display: flex; justify-content: flex-end; margin-top: 22px; }
 </style>
