@@ -201,7 +201,10 @@ describe('createJobBrowser — embedded browser surface', () => {
 
   it('AC7: no scraping / extraction / scheduling code is introduced', () => {
     const surface = readFileSync(path.join(ELECTRON_DIR, 'browser-surface.ts'), 'utf8');
-    const preload = readFileSync(path.join(ELECTRON_DIR, 'electron-preload.ts'), 'utf8');
+    // electron-preload.ts is no longer scanned for /extract/ here: EXTR-006
+    // legitimately introduces the starExtract / extract:progress bridge.
+    // browser-surface.ts itself must remain a pure surface — the scope
+    // boundary BRWSR-001 cared about is still enforced on that file.
     const forbidden = [
       /executeJavaScript/i,
       /insertCSS/i,
@@ -213,7 +216,6 @@ describe('createJobBrowser — embedded browser surface', () => {
     ];
     for (const pat of forbidden) {
       expect(surface, `browser-surface.ts contains forbidden pattern ${pat}`).not.toMatch(pat);
-      expect(preload, `electron-preload.ts contains forbidden pattern ${pat}`).not.toMatch(pat);
     }
   });
 });

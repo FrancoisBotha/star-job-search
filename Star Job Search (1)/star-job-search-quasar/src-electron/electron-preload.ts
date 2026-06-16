@@ -69,3 +69,36 @@ contextBridge.exposeInMainWorld('starPreferredModels', {
   remove: (slug: string) => ipcRenderer.invoke('preferredModels:remove', slug),
   setDefault: (slug: string) => ipcRenderer.invoke('preferredModels:setDefault', slug),
 });
+
+// Agentic extraction bridge (EXTR-006). `extract` kicks off an extraction
+// run against whatever the visible Discover browser is currently showing
+// and resolves to a tagged-union result. `onProgress` subscribes to
+// `extract:progress` events streamed by the main process during the run.
+interface ExtractProgressEvent {
+  phase: string;
+  [key: string]: unknown;
+}
+
+contextBridge.exposeInMainWorld('starExtract', {
+  extract: () => ipcRenderer.invoke('ai:extract'),
+  onProgress: (cb: (event: ExtractProgressEvent) => void) => {
+    const listener = (_event: unknown, evt: ExtractProgressEvent) => cb(evt);
+    ipcRenderer.on('extract:progress', listener);
+    return () => ipcRenderer.removeListener('extract:progress', listener);
+  },
+});
+
+// Job-board bridge (EXTR-006). `list` reads persisted jobs (optional status
+// filter), `setStatus` flips a posting's status, `open` navigates the
+// embedded Discover browser to a URL (used by job-detail click-throughs).
+interface BoardListFilter {
+  status?: string;
+  excludeStatus?: string;
+}
+
+contextBridge.exposeInMainWorld('starBoard', {
+  list: (filter?: BoardListFilter) => ipcRenderer.invoke('board:list', filter),
+  setStatus: (input: { sourceId: string; status: string }) =>
+    ipcRenderer.invoke('board:setStatus', input),
+  open: (url: string) => ipcRenderer.invoke('view:open', url),
+});

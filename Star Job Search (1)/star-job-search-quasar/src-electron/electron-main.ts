@@ -6,12 +6,14 @@
 import { app, BrowserWindow, Menu, ipcMain, safeStorage, type WebContents } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createJobBrowser } from './browser-surface';
+import { createJobBrowser, JOB_BROWSER_PARTITION } from './browser-surface';
 import { createSitesStore, openSitesDatabase, registerSitesIpc } from './sites';
 import { createApiKeyStore, registerApiKeyIpc } from './apiKey';
 import { createLlmCatalogue, registerLlmCatalogueIpc } from './llmCatalogue';
 import { createPreferredModelsStore, registerPreferredModelsIpc } from './preferredModels';
 import { startMcpBrowserServer, type RunningMcpBrowserServer } from './mcp-browser-server';
+import { createJobsStore } from './jobs';
+import { buildDefaultExtractor, registerExtractionIpc } from './extraction';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -32,6 +34,7 @@ let mainWindow: BrowserWindow | undefined;
 let jobBrowser: ReturnType<typeof createJobBrowser> | undefined;
 let activeTargetOverride: WebContents | undefined;
 let mcpBrowserServer: RunningMcpBrowserServer | undefined;
+let crawlerWindow: BrowserWindow | undefined;
 
 export function getActiveTarget(): WebContents | undefined {
   // Default: the Discover-tab embedded browser. Override wins when set.
@@ -101,6 +104,70 @@ function createWindow() {
     getApiKey: () => apiKeyStore.getRawKey(),
   });
   registerLlmCatalogueIpc(ipcMain, llmCatalogue);
+
+  // Wire the agentic extraction runtime + IPC (EXTR-006). The jobs store is
+  // backed by the same star.db handle used by sites / preferred-models. The
+  // runtime drives a HIDDEN crawler webContents that shares the Discover
+  // browser's partitioned session, so cookies / consent state carry over
+  // without forcing the user to watch the page being scraped underneath
+  // them. The active-target seam from EXTR-001 is used to retarget MCP tool
+  // calls to the crawler for the duration of the run.
+  const jobsStore = createJobsStore(sitesDb);
+  const preferredModelsForExtraction = createPreferredModelsStore(sitesDb);
+  const preloadPath = path.resolve(
+    currentDir,
+    path.join(
+      process.env.QUASAR_ELECTRON_PRELOAD_FOLDER!,
+      'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION,
+    ),
+  );
+  const ensureCrawler = async (): Promise<WebContents> => {
+    if (crawlerWindow && !crawlerWindow.isDestroyed()) {
+      return crawlerWindow.webContents;
+    }
+    crawlerWindow = new BrowserWindow({
+      show: false,
+      width: 1280,
+      height: 900,
+      webPreferences: {
+        partition: JOB_BROWSER_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        preload: preloadPath,
+      },
+    });
+    crawlerWindow.on('closed', () => {
+      crawlerWindow = undefined;
+    });
+    return crawlerWindow.webContents;
+  };
+
+  registerExtractionIpc(ipcMain, {
+    store: jobsStore,
+    getVisibleTarget: () => jobBrowser?.view?.webContents,
+    setActiveTarget,
+    ensureCrawler,
+    visibleNavigate: async (url: string) => {
+      const wc = jobBrowser?.view?.webContents;
+      if (!wc) throw new Error('Discover browser is not initialised yet');
+      await wc.loadURL(url);
+    },
+    getApiKey: () => apiKeyStore.getRawKey(),
+    getDefaultModel: () => {
+      const models = preferredModelsForExtraction.list();
+      const def = models.find((m) => m.isDefault);
+      return def?.slug ?? null;
+    },
+    buildExtractor: (input) =>
+      buildDefaultExtractor({
+        ...input,
+        mcpUrl: mcpBrowserServer?.url,
+      }),
+    emitProgress: (e) => {
+      mainWindow?.webContents.send('extract:progress', e);
+    },
+  });
 
   // Keep the renderer's maximize control in sync with the real window state.
   const emitMaximized = () =>

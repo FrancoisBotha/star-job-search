@@ -103,6 +103,58 @@ interface StarPreferredModelsApi {
   setDefault: (slug: string) => Promise<StarPreferredModel[]>;
 }
 
+/** A single posting as returned by board:list (EXTR-006). */
+interface StarBoardJob {
+  sourceId: string;
+  hostname: string;
+  url: string;
+  title?: string | null;
+  company?: string | null;
+  location?: string | null;
+  description?: string | null;
+  postedAt?: number | null;
+  fetchedAt: number;
+  status?: string;
+}
+
+/** Filter accepted by board:list. */
+interface StarBoardListFilter {
+  status?: string;
+  excludeStatus?: string;
+}
+
+/** Summary returned by ai:extract on success. */
+interface StarExtractSummary {
+  imported: number;
+  skipped: number;
+  total: number;
+  pages: number;
+}
+
+/** Progress event streamed via extract:progress (EXTR-006). Phases mirror jobExtractor.ProgressEvent. */
+interface StarExtractProgressEvent {
+  phase: string;
+  [key: string]: unknown;
+}
+
+type StarExtractResult =
+  | { ok: true; summary: StarExtractSummary }
+  | { ok: false; error: string };
+
+/** Bridge exposed by src-electron/electron-preload.ts for agentic extraction (EXTR-006). */
+interface StarExtractApi {
+  extract: () => Promise<StarExtractResult>;
+  /** Subscribe to `extract:progress`. Returns an unsubscribe function. */
+  onProgress: (cb: (event: StarExtractProgressEvent) => void) => () => void;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the job board (EXTR-006). */
+interface StarBoardApi {
+  list: (filter?: StarBoardListFilter) => Promise<StarBoardJob[]>;
+  setStatus: (input: { sourceId: string; status: string }) => Promise<{ ok: true }>;
+  open: (url: string) => Promise<{ ok: true }>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
@@ -110,4 +162,6 @@ interface Window {
   starApiKey?: StarApiKeyApi;
   starModels?: StarModelsApi;
   starPreferredModels?: StarPreferredModelsApi;
+  starExtract?: StarExtractApi;
+  starBoard?: StarBoardApi;
 }

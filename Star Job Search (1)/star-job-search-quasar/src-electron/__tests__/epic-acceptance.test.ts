@@ -168,11 +168,14 @@ describe('Epic §9 AC9 — scope boundary: no scraping / extraction / scoring / 
   // omitted from this strict scan because its pre-existing "About" dialog
   // already includes the word "scoring" as marketing copy describing the
   // product — that text predates this epic and is not in scope here.
+  // electron-main.ts and electron-preload.ts are no longer scanned here:
+  // EXTR-006 legitimately wires the extraction runtime (ai:extract,
+  // board:list/setStatus, view:open, extract:progress) into those files.
+  // The scope boundary BRWSR-001 cared about is still enforced on the
+  // surface itself, the persisted sites store, and the renderer pieces.
   const FILES: Array<[string, string]> = [
     ['browser-surface.ts', SURFACE],
     ['sites.ts', SITES],
-    ['electron-preload.ts', PRELOAD],
-    ['electron-main.ts', MAIN],
     ['DiscoverPage.vue', DISCOVER],
     ['app-store.ts', STORE],
   ];
