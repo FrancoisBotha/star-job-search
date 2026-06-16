@@ -36,7 +36,10 @@
     <div class="body">
         <!-- SIDEBAR -->
         <aside class="sidebar">
-          <div class="brand font-serif"><span class="brand__star">★</span> Star</div>
+          <div class="brand">
+        <div class="brand__row font-serif"><span class="brand__star">★</span> Star</div>
+        <div class="brand__sub">Job Search</div>
+      </div>
 
           <nav class="nav">
             <button
@@ -218,14 +221,23 @@ const setupNav = [
   flex-direction: column;
 }
 .brand {
-  font-size: 27px;
-  line-height: 1;
   margin-bottom: 26px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
   padding: 0 8px;
+  &__row {
+    font-size: 27px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
   &__star { color: var(--accent); }
+  &__sub {
+    margin-top: 5px;
+    margin-left: 27px; /* aligns under "Star", clearing the star glyph + gap */
+    font: 300 13px/1 var(--font-ui);
+    letter-spacing: 0.04em;
+    color: var(--faint);
+  }
 }
 .nav { display: flex; flex-direction: column; gap: 3px; }
 .nav__item {
