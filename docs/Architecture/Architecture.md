@@ -88,6 +88,48 @@ Note the **preload bridge is the current gap**: today it exposes only `starWindo
 (title-bar controls). The CV-picker, backup-folder, and key-store channels are the
 first real backend work — the preload file itself flags them as future bridges.
 
+## 3a. Agentic Extraction Subsystem (Epic 3)
+
+The agentic extraction subsystem turns the embedded browser into an importer for
+the user's local **job board**. It sits entirely in main and reuses, rather than
+forks, the two prior egress paths — it never opens a new one.
+
+- **MCP browser server (in-process).** A Model Context Protocol server hosted
+  inside main exposes browser and extraction tools (navigate, query DOM,
+  enumerate listing cards, follow detail links) against the *active target* — a
+  seam that points the tools at either the visible Discover `BrowserView` or a
+  hidden crawler window. Tools are the only way the LLM agent reaches the page;
+  there is no direct fetcher.
+- **Hidden crawler.** A second partitioned `BrowserView`, never shown to the
+  user, that the MCP tools retarget onto when a run needs to paginate or open
+  detail pages without disturbing the Discover view. It inherits the same
+  session-isolation guarantee as the visible browser (NFR-001).
+- **LangGraph extraction graph.** A deterministic graph
+  (`discover → enumerate → paginate → dedup → extract → persist`) drives the
+  agent. The LLM proposes tool calls; the graph enforces ordering, throttles
+  page loads, caps pagination, and stops on CAPTCHA detection rather than
+  attempting to bypass it (a permanent product non-goal).
+- **Job board.** SQLite tables `jobs` and `site_profiles` in `star.db`, with
+  per-posting `sourceId` dedup so re-runs over the same listing don't import
+  duplicates. The Starred matches page is the board view; `board:setStatus`
+  flips a row between `new` / `not_interested` / restored.
+- **Progress + IPC.** `ai:extract` triggers a run and streams `extract:progress`
+  events (phase, message, current/total) to the renderer; `board:list` and
+  `board:setStatus` back the Starred matches view; `view:open` returns a job
+  URL to the embedded browser.
+
+**Dependencies on earlier epics — load-bearing, not optional:**
+
+- **Epic 1 (Embedded Job-Site Browser).** The visible `BrowserView` and the
+  persisted `Site` list are the entry point: the user signs in and filters
+  inside that browser before AI Extract runs. The hidden crawler is the same
+  surface in a second partition. Without Epic 1's preload bridge, partitioned
+  session, and sites persistence, the extraction subsystem has nothing to drive.
+- **Epic 2 (OpenRouter LLM integration).** The agent uses the user's stored
+  OpenRouter key and their selected preferred model — extraction is gated on a
+  saved key and a chosen default model. The LLM Gateway from Epic 2 is the only
+  caller; the extraction subsystem never opens a third egress path.
+
 ## 4. Key Decisions
 
 - **Electron, not Tauri/native:** the product *needs* an embedded browser to scan

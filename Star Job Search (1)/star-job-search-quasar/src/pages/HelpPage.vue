@@ -48,6 +48,23 @@
         </div>
       </div>
 
+      <!-- Importing jobs with AI Extract -->
+      <h2 class="section-title sec">Importing jobs with AI Extract</h2>
+      <p class="lead">
+        AI Extract reads the listing page you currently have open in Discover and imports the
+        matching jobs into your local board. Star never bypasses logins, paywalls, or CAPTCHAs —
+        you sign in and narrow the search first, then hand the filtered page to Star.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in extractSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- How the star score works -->
       <h2 class="section-title sec">How the star score works</h2>
       <p class="lead">
@@ -138,6 +155,25 @@ const providerSteps = [
   {
     title: 'Set a default model',
     body: 'In the preferred-models list, press Set default next to the model Star should reach for first when scoring jobs and drafting CVs and cover letters. Remove drops any model you no longer want.',
+  },
+];
+
+const extractSteps = [
+  {
+    title: 'Log in and filter on Discover',
+    body: 'On the Discover page, pick the site and use its own search to log in if needed and narrow the listing to the roles you want — location, keywords, seniority. Star imports whatever the page is showing, so the tighter the filter, the better the board.',
+  },
+  {
+    title: 'Click AI Extract',
+    body: 'With the filtered listing on screen, hit the AI Extract button. Star drives a hidden crawler over that page using your preferred OpenRouter model and writes the results to your local job board.',
+  },
+  {
+    title: 'Watch progress',
+    body: 'A progress line shows the current phase (discover, enumerate, paginate, extract) and how many postings have been imported so far. The run stops automatically on a CAPTCHA or after the configured page cap.',
+  },
+  {
+    title: 'Triage on Starred matches',
+    body: 'Open Starred matches to see what was imported. Open sends the posting back into the embedded browser; Not interested hides it; Restore N hidden brings hidden roles back when you change your mind.',
   },
 ];
 
