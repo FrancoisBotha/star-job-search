@@ -76,7 +76,16 @@ export type ProgressEvent =
   | { phase: 'dedup'; newCount: number; skipped: number; total: number }
   | { phase: 'extract'; current: number; total: number; sourceId: string }
   | { phase: 'persist'; imported: number; skipped: number; total: number; pages: number }
-  | { phase: 'done'; imported: number; skipped: number; total: number; pages: number };
+  | { phase: 'done'; imported: number; skipped: number; total: number; pages: number }
+  | {
+      phase: 'error';
+      kind: 'captcha' | 'failure';
+      message: string;
+      imported: number;
+      skipped: number;
+      total: number;
+      pages: number;
+    };
 
 export interface JobExtractorDeps {
   store: JobsStore;
@@ -84,6 +93,10 @@ export interface JobExtractorDeps {
   llm: StructuredLlm;
   onProgress?: (e: ProgressEvent) => void;
   pageCap?: number;
+  /** Pause between navigations and page-clicks. Defaults to 250ms (EXTR-005). */
+  throttleMs?: number;
+  /** Sleep implementation — injectable for tests. */
+  sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
 
@@ -120,6 +133,50 @@ interface ExtractorState {
 }
 
 const DEFAULT_PAGE_CAP = 5;
+const DEFAULT_THROTTLE_MS = 250;
+
+// EXTR-005: CAPTCHA / bot-challenge markers. We pattern-match against the
+// page body. False positives are preferred over false negatives — the run
+// aborts loudly and lets the user solve the challenge manually rather than
+// attempting any kind of bypass (NFR-004, FR-009).
+const CAPTCHA_MARKERS: readonly string[] = [
+  'recaptcha',
+  'g-recaptcha',
+  'hcaptcha',
+  'h-captcha',
+  'cf-challenge',
+  'cf-turnstile',
+  'turnstile',
+  'cloudflare',
+  'verify you are human',
+  'are you a robot',
+  'are you a human',
+  'unusual traffic',
+  'bot detection',
+  'press and hold',
+  'i am not a robot',
+  'security check',
+];
+
+function looksLikeCaptcha(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  for (const m of CAPTCHA_MARKERS) {
+    if (lower.includes(m)) return true;
+  }
+  return false;
+}
+
+class CaptchaError extends Error {
+  readonly kind = 'captcha' as const;
+  constructor(message = 'CAPTCHA or bot challenge detected — extraction halted') {
+    super(message);
+    this.name = 'CaptchaError';
+  }
+}
+
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 function deriveStubFromCardText(text: string): { title: string; company?: string } {
   const trimmed = text.trim().replace(/\s+/g, ' ');
@@ -141,6 +198,8 @@ export function createJobExtractor(deps: JobExtractorDeps): {
     llm,
     onProgress,
     pageCap = DEFAULT_PAGE_CAP,
+    throttleMs = DEFAULT_THROTTLE_MS,
+    sleep = defaultSleep,
     now = () => Date.now(),
   } = deps;
 
@@ -148,14 +207,58 @@ export function createJobExtractor(deps: JobExtractorDeps): {
     if (onProgress) onProgress(e);
   };
 
+  // Closure-scoped run telemetry — survives a node throwing so the catch
+  // handler in run() can persist already-extracted jobs (AC3) and surface a
+  // partial result.
+  interface RunTelemetry {
+    extracted: JobRecord[];
+    persistedCount: number;
+    persisted: boolean;
+    skipped: number;
+    total: number;
+    pages: number;
+    hostname: string;
+  }
+  let tele: RunTelemetry = {
+    extracted: [],
+    persistedCount: 0,
+    persisted: false,
+    skipped: 0,
+    total: 0,
+    pages: 1,
+    hostname: '',
+  };
+
+  const throttle = async () => {
+    if (throttleMs > 0) await sleep(throttleMs);
+  };
+
+  const assertNoCaptcha = async (where: string): Promise<void> => {
+    let body = '';
+    try {
+      body = await browser.getText('body');
+    } catch {
+      body = '';
+    }
+    if (looksLikeCaptcha(body)) {
+      throw new CaptchaError(
+        `CAPTCHA or bot challenge detected on ${where} — extraction halted`,
+      );
+    }
+  };
+
   async function initNode(state: ExtractorState): Promise<Partial<ExtractorState>> {
     await browser.navigate(state.searchUrl);
+    await throttle();
     let hostname = '';
     try {
       hostname = new URL(state.searchUrl).hostname.toLowerCase();
     } catch {
       hostname = '';
     }
+    tele.hostname = hostname;
+    // AC1: halt before enumerate if the board is gating us with a challenge.
+    await assertNoCaptcha('search page');
     return { hostname };
   }
 
@@ -238,6 +341,8 @@ ${(sample ?? '').slice(0, 12000)}`,
     } catch {
       return { paginationStopped: true };
     }
+    await throttle();
+    tele.pages = state.page + 1;
     return { page: state.page + 1 };
   }
 
@@ -267,6 +372,9 @@ ${(sample ?? '').slice(0, 12000)}`,
       skipped,
       total: state.candidates.length,
     });
+    tele.skipped = skipped;
+    tele.total = state.candidates.length;
+    tele.pages = state.page;
     return {
       newCandidates: fresh,
       result: {
@@ -288,13 +396,30 @@ ${(sample ?? '').slice(0, 12000)}`,
     for (const cand of state.newCandidates) {
       i++;
       emit({ phase: 'extract', current: i, total, sourceId: cand.sourceId });
+
+      // Detail navigation is the most likely place for a hard failure or a
+      // bot challenge to surface. We keep navigate + captcha-check OUTSIDE
+      // the LLM try/catch so those failures abort the run (AC1, AC3) rather
+      // than being papered over with a stub.
+      await browser.navigate(cand.url);
+      await throttle();
+      let body = '';
+      try {
+        body = await browser.getText('body');
+      } catch {
+        body = '';
+      }
+      if (looksLikeCaptcha(body)) {
+        throw new CaptchaError(
+          `CAPTCHA or bot challenge detected on detail page ${cand.url} — extraction halted`,
+        );
+      }
+
       let title = '';
       let company: string | null | undefined;
       let location: string | null | undefined;
       let description: string | null | undefined;
       try {
-        await browser.navigate(cand.url);
-        const body = await browser.getText('body');
         const structured = llm.withStructuredOutput(JobSchema, { name: 'JobSchema' });
         const job = await structured.invoke(
           `Extract the job posting fields from the page below. Posting URL: ${cand.url}.
@@ -315,7 +440,7 @@ ${(body ?? '').slice(0, 16000)}`,
         title = stub.title;
         company = stub.company ?? null;
       }
-      extracted.push({
+      const record: JobRecord = {
         sourceId: cand.sourceId,
         hostname: state.hostname,
         url: cand.url,
@@ -324,13 +449,26 @@ ${(body ?? '').slice(0, 16000)}`,
         location,
         description,
         fetchedAt,
-      });
+      };
+      extracted.push(record);
+      tele.extracted.push(record);
+      // AC3: persist each posting as it's structured, so a later crash does
+      // not roll back what we've already captured. INSERT OR IGNORE makes
+      // the subsequent batch upsert in persistNode idempotent.
+      const inserted = store.upsertJobs([record]);
+      tele.persistedCount += inserted;
     }
     return { extracted };
   }
 
   async function persistNode(state: ExtractorState): Promise<Partial<ExtractorState>> {
-    const imported = store.upsertJobs(state.extracted);
+    // AC3: extractDetails already persisted each posting as it was structured.
+    // We re-upsert here defensively — INSERT OR IGNORE makes it idempotent —
+    // and credit the count from the incremental path so the final result is
+    // accurate even when this node would otherwise see no new rows.
+    const extraInserted = store.upsertJobs(state.extracted);
+    const imported = tele.persistedCount + extraInserted;
+    tele.persisted = true;
     const result: ExtractorResult = {
       imported,
       skipped: state.result.skipped,
@@ -384,6 +522,16 @@ ${(body ?? '').slice(0, 16000)}`,
 
   return {
     async run(input: ExtractorInput): Promise<ExtractorResult> {
+      // Reset run-level telemetry so a re-used extractor doesn't bleed state.
+      tele = {
+        extracted: [],
+        persistedCount: 0,
+        persisted: false,
+        skipped: 0,
+        total: 0,
+        pages: 1,
+        hostname: '',
+      };
       const initialState: ExtractorState = {
         searchUrl: input.searchUrl,
         hostname: '',
@@ -398,8 +546,25 @@ ${(body ?? '').slice(0, 16000)}`,
         extracted: [],
         result: { imported: 0, skipped: 0, total: 0, pages: 0 },
       };
-      const final = (await compiled.invoke(initialState)) as ExtractorState;
-      return final.result;
+      try {
+        const final = (await compiled.invoke(initialState)) as ExtractorState;
+        return final.result;
+      } catch (err) {
+        // AC1 + AC3: surface failure cleanly. Jobs already extracted have
+        // already been persisted incrementally inside extractDetailsNode, so
+        // the board is never left in a partial / corrupted state.
+        const kind: 'captcha' | 'failure' =
+          err instanceof CaptchaError ? 'captcha' : 'failure';
+        const message = err instanceof Error ? err.message : String(err);
+        const result: ExtractorResult = {
+          imported: tele.persistedCount,
+          skipped: tele.skipped,
+          total: tele.total,
+          pages: tele.pages,
+        };
+        emit({ phase: 'error', kind, message, ...result });
+        return result;
+      }
     },
   };
 }
