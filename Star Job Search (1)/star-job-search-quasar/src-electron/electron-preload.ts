@@ -2,6 +2,7 @@
  * Electron preload. Exposes safe, typed bridges to the renderer.
  * `starWindow` drives the custom (frameless) title-bar controls.
  * `starBrowser` drives the embedded job-site browser surface (BRWSR-001).
+ * `starSites` drives the persisted job-sites list (BRWSR-002).
  * Future bridges (CV file picking, backup-folder selection, secure key
  * storage) belong here too.
  */
@@ -31,4 +32,15 @@ contextBridge.exposeInMainWorld('starBrowser', {
   show: (visible: boolean) => ipcRenderer.invoke('job-browser:show', visible),
   setBounds: (bounds: JobBrowserBounds) =>
     ipcRenderer.invoke('job-browser:set-bounds', bounds),
+});
+
+interface AddSiteInput {
+  url: string;
+  label?: string;
+}
+
+contextBridge.exposeInMainWorld('starSites', {
+  list: () => ipcRenderer.invoke('sites:list'),
+  add: (input: AddSiteInput) => ipcRenderer.invoke('sites:add', input),
+  remove: (id: string) => ipcRenderer.invoke('sites:remove', id),
 });

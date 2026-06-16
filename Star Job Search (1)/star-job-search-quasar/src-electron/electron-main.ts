@@ -7,6 +7,7 @@ import { app, BrowserWindow, Menu, ipcMain } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJobBrowser } from './browser-surface';
+import { createSitesStore, openSitesDatabase, registerSitesIpc } from './sites';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -54,6 +55,11 @@ function createWindow() {
   // Wire the embedded job-site browser surface (partitioned session,
   // preload-bridge channels). See src-electron/browser-surface.ts.
   createJobBrowser(mainWindow);
+
+  // Wire the persisted job-sites store + IPC. The DB file lives under the
+  // OS-standard userData dir so it survives app restarts (FR-002).
+  const sitesDb = openSitesDatabase(path.join(app.getPath('userData'), 'star.db'));
+  registerSitesIpc(ipcMain, createSitesStore(sitesDb));
 
   // Keep the renderer's maximize control in sync with the real window state.
   const emitMaximized = () =>
