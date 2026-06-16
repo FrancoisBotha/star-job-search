@@ -32,6 +32,22 @@
         </div>
       </div>
 
+      <!-- Connecting an AI provider -->
+      <h2 class="section-title sec">Connecting an AI provider</h2>
+      <p class="lead">
+        Star uses OpenRouter to score jobs and draft tailored CVs &amp; cover letters. Your key
+        is stored locally and never leaves this device.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in providerSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- How the star score works -->
       <h2 class="section-title sec">How the star score works</h2>
       <p class="lead">
@@ -75,7 +91,7 @@ const steps = [
   },
   {
     title: 'Connect an AI provider',
-    body: 'Add your OpenRouter key in Settings — it powers scoring and CV/cover-letter drafting.',
+    body: 'Paste your OpenRouter key in Settings → LLM integration and hit Save, run Test connection to confirm it works, then use Select models… to pick your preferred models and Set default on the one Star should use first.',
   },
   {
     title: 'Choose the sites to scan',
@@ -103,6 +119,25 @@ const browseSteps = [
   {
     title: 'Remove sites you no longer want',
     body: 'Back in Settings → Job sites, hit Remove next to any site to drop it. It disappears from the Discover dropdown straight away.',
+  },
+];
+
+const providerSteps = [
+  {
+    title: 'Save your OpenRouter key',
+    body: 'In Settings → LLM integration, paste your key from openrouter.ai/keys into the OpenRouter API key field and press Save. Star stores it locally and only shows a masked preview after that — use Clear to remove it.',
+  },
+  {
+    title: 'Run Test connection',
+    body: 'Hit Test connection to confirm the key reaches OpenRouter. A green Connected line with a model count means you\'re good; an error line tells you what to fix.',
+  },
+  {
+    title: 'Pick your preferred models',
+    body: 'Click Select models… to open the picker and choose up to five models you\'re happy for Star to use. The button is enabled once a key is saved.',
+  },
+  {
+    title: 'Set a default model',
+    body: 'In the preferred-models list, press Set default next to the model Star should reach for first when scoring jobs and drafting CVs and cover letters. Remove drops any model you no longer want.',
   },
 ];
 
