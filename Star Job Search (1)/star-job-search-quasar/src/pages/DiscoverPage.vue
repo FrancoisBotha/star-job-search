@@ -17,6 +17,27 @@
             <span class="font-mono">{{ activeUrl || 'No site loaded' }}</span>
             <span class="chrome__tag"><span class="scan-dot" />Star browsing</span>
           </div>
+          <button
+            type="button"
+            class="chrome__extract"
+            :disabled="store.isExtracting"
+            @click="onExtract"
+          >
+            <span class="scan-dot" />AI Extract
+          </button>
+        </div>
+
+        <div
+          v-if="store.isExtracting || progressMessage || store.extractError"
+          class="progress"
+          :class="{ 'progress--error': !!store.extractError }"
+          role="status"
+          aria-live="polite"
+        >
+          <span v-if="store.extractError" class="progress__error" role="alert">
+            Extraction failed: {{ store.extractError }}
+          </span>
+          <span v-else>{{ progressMessage }}</span>
         </div>
 
         <!-- The real embedded BrowserView is overlaid on top of this surface
@@ -80,6 +101,40 @@ const siteOptions = computed(() =>
   store.sites.map((s) => ({ value: s.id, label: s.label || s.host, url: s.url })),
 );
 
+/**
+ * Human-readable progress copy derived from the store's
+ * extractProgress snapshot. The store flattens the raw
+ * StarExtractProgressEvent (phase + numbers) into
+ * { phase, message, done, total } — this computes the per-phase string
+ * the chrome bar shows.
+ */
+const progressMessage = computed(() => {
+  const p = store.extractProgress;
+  if (!p) return '';
+  const done = p.done ?? 0;
+  const total = p.total ?? 0;
+  switch (p.phase) {
+    case 'discover':
+      return 'Discovering listing…';
+    case 'enumerate':
+      return `Found ${done} jobs`;
+    case 'dedup':
+      return `Found ${done} jobs`;
+    case 'extract':
+      return `Extracted ${done}/${total}`;
+    case 'persist':
+    case 'done':
+      return `Imported ${done} of ${total} listed`;
+    default:
+      return p.message ?? '';
+  }
+});
+
+async function onExtract() {
+  if (store.isExtracting) return;
+  await store.triggerExtract();
+}
+
 function applyBounds() {
   const el = surfaceEl.value;
   if (!el || typeof window === 'undefined' || !window.starBrowser) return;
@@ -121,6 +176,7 @@ const onWindowResize = () => applyBounds();
 
 onMounted(async () => {
   await store.hydrateSites();
+  store.subscribeExtractProgress();
   if (typeof window !== 'undefined' && window.starBrowser) {
     await window.starBrowser.create();
     if (store.sites.length) {
@@ -154,6 +210,7 @@ watch(
 
 onBeforeUnmount(async () => {
   resizeObserver?.disconnect();
+  store.unsubscribeExtractProgress();
   if (typeof window !== 'undefined') {
     window.removeEventListener('resize', onWindowResize);
     await window.starBrowser?.show(false);
@@ -180,6 +237,23 @@ onBeforeUnmount(async () => {
     .font-mono { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
   &__tag { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font: 500 11px/1 var(--font-mono); color: var(--accent); }
+  &__extract {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 12px;
+    background: var(--rail); color: var(--text-2);
+    border: 1px solid var(--hair); border-radius: 8px;
+    font: 500 12px/1 var(--font-mono); cursor: pointer;
+    &:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+    &:disabled { opacity: 0.5; cursor: not-allowed; }
+  }
+}
+
+.progress {
+  flex-shrink: 0; padding: 8px 16px; border-bottom: 1px solid var(--hair);
+  background: var(--rail); color: var(--muted);
+  font: 500 12px/1 var(--font-mono);
+  &--error { color: var(--text-2); }
+  &__error { color: var(--text-2); }
 }
 
 .surface { flex: 1; position: relative; min-height: 0; background: var(--bg); }
