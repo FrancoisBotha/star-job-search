@@ -10,6 +10,7 @@ import { createJobBrowser } from './browser-surface';
 import { createSitesStore, openSitesDatabase, registerSitesIpc } from './sites';
 import { createApiKeyStore, registerApiKeyIpc } from './apiKey';
 import { createLlmCatalogue, registerLlmCatalogueIpc } from './llmCatalogue';
+import { createPreferredModelsStore, registerPreferredModelsIpc } from './preferredModels';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -62,6 +63,11 @@ function createWindow() {
   // OS-standard userData dir so it survives app restarts (FR-002).
   const sitesDb = openSitesDatabase(path.join(app.getPath('userData'), 'star.db'));
   registerSitesIpc(ipcMain, createSitesStore(sitesDb));
+
+  // Wire the preferred-models store + IPC (LLM-003). Shares the star.db
+  // handle opened above; the store creates its own `preferred_models` table
+  // on first run and enforces the max-5 / single-default invariants.
+  registerPreferredModelsIpc(ipcMain, createPreferredModelsStore(sitesDb));
 
   // Wire the OpenRouter API key store + IPC (LLM-001). The key is encrypted
   // with safeStorage and the blob lives next to the SQLite DB under userData.

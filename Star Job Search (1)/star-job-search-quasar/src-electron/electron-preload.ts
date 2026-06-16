@@ -59,3 +59,13 @@ contextBridge.exposeInMainWorld('starApiKey', {
 contextBridge.exposeInMainWorld('starModels', {
   list: () => ipcRenderer.invoke('llm:listModels'),
 });
+
+// Preferred-models bridge (LLM-003). Each call returns the updated
+// PreferredModel[] list; `add` returns a tagged union so the renderer can
+// branch on EMPTY_SLUG / DUPLICATE / LIMIT_REACHED without losing the code.
+contextBridge.exposeInMainWorld('starPreferredModels', {
+  list: () => ipcRenderer.invoke('preferredModels:list'),
+  add: (slug: string) => ipcRenderer.invoke('preferredModels:add', slug),
+  remove: (slug: string) => ipcRenderer.invoke('preferredModels:remove', slug),
+  setDefault: (slug: string) => ipcRenderer.invoke('preferredModels:setDefault', slug),
+});

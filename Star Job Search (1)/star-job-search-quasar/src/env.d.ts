@@ -81,10 +81,33 @@ interface StarModelsApi {
   list: () => Promise<StarModelsResult>;
 }
 
+/** One row of the user's preferred-model list (LLM-003). */
+interface StarPreferredModel {
+  slug: string;
+  isDefault: boolean;
+  position: number;
+}
+
+/** Typed validation errors returned by preferredModels:add (LLM-003). */
+type StarPreferredModelsAddErrorCode = 'EMPTY_SLUG' | 'DUPLICATE' | 'LIMIT_REACHED';
+
+type StarPreferredModelsAddResult =
+  | { ok: true; models: StarPreferredModel[] }
+  | { ok: false; code: StarPreferredModelsAddErrorCode; message: string };
+
+/** Bridge exposed by src-electron/electron-preload.ts for the preferred-models list. */
+interface StarPreferredModelsApi {
+  list: () => Promise<StarPreferredModel[]>;
+  add: (slug: string) => Promise<StarPreferredModelsAddResult>;
+  remove: (slug: string) => Promise<StarPreferredModel[]>;
+  setDefault: (slug: string) => Promise<StarPreferredModel[]>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
   starSites?: StarSitesApi;
   starApiKey?: StarApiKeyApi;
   starModels?: StarModelsApi;
+  starPreferredModels?: StarPreferredModelsApi;
 }
