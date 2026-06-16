@@ -39,8 +39,48 @@
         </div>
         <div class="hint">Get a key at <span class="link">openrouter.ai/keys</span></div>
 
-        <div class="eyebrow lbl">Model</div>
-        <q-select v-model="model" :options="models" outlined dense class="field" />
+        <!-- LLM-006 AC2 — preferred-models list replacing the mock q-select.
+             Each row shows the model name, a "Set default" affordance, and
+             a Remove button; mutations round-trip through the store/bridges
+             so they survive a restart (AC3). The Select-models… button is
+             disabled until an API key is saved. -->
+        <div class="eyebrow lbl">Preferred models</div>
+        <div v-if="store.preferredModels.length === 0" class="prefs-empty">
+          No models picked yet. Open the picker to choose up to 5.
+        </div>
+        <div v-else class="prefs">
+          <div v-for="m in store.preferredModels" :key="m.slug" class="prefs__row">
+            <div class="prefs__meta">
+              <div class="prefs__name">{{ modelLabel(m.slug) }}</div>
+              <div class="prefs__slug font-mono">{{ m.slug }}</div>
+            </div>
+            <span v-if="m.isDefault" class="prefs__default">Default</span>
+            <q-btn
+              v-else
+              outline no-caps dense
+              class="prefs__action"
+              label="Set default"
+              @click="store.setDefaultPreferredModel(m.slug)"
+            />
+            <q-btn
+              outline no-caps dense
+              class="prefs__action prefs__action--remove"
+              label="Remove"
+              @click="store.removePreferredModel(m.slug)"
+            />
+          </div>
+        </div>
+        <div class="prefs-actions">
+          <q-btn
+            unelevated color="dark" no-caps
+            label="Select models…"
+            :disable="!store.apiKeyStatus.present"
+            @click="showPicker = true"
+          />
+          <span v-if="!store.apiKeyStatus.present" class="prefs-actions__hint">
+            Save an OpenRouter key to pick models.
+          </span>
+        </div>
 
         <div class="test">
           <q-btn
@@ -134,6 +174,10 @@
       <q-btn unelevated color="primary" no-caps class="save" label="Save settings" />
     </div>
 
+    <!-- LLM-006 AC1/AC4 — preferred-models picker dialog, styled in the
+         same q-dialog visual system as the About dialog below. -->
+    <PreferredModelsPickerDialog v-model="showPicker" />
+
     <!-- About dialog -->
     <q-dialog v-model="showAbout">
       <q-card class="about">
@@ -160,6 +204,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
+import PreferredModelsPickerDialog from 'src/components/PreferredModelsPickerDialog.vue';
 
 const store = useAppStore();
 
@@ -174,6 +219,9 @@ onMounted(() => {
   // LLM-005 AC1 — pull the masked OpenRouter key status so the row reflects
   // whether a key survived the last restart.
   void store.hydrateApiKeyStatus();
+  // LLM-006 AC3 — pull the persisted preferred-models list so the Settings
+  // card reflects the choices that survived the last restart.
+  void store.hydratePreferredModels();
 });
 
 async function onSave() {
@@ -207,8 +255,14 @@ const connectionMessage = computed(() => {
   }
 });
 
-const model = ref('anthropic/claude-3.5-sonnet');
-const models = ['anthropic/claude-3.5-sonnet', 'anthropic/claude-3-opus', 'openai/gpt-4o', 'google/gemini-1.5-pro'];
+// LLM-006 AC2 — resolve a slug to the catalogue display name when available,
+// falling back to the slug itself when the catalogue hasn't loaded yet.
+function modelLabel(slug: string): string {
+  const hit = store.models.find((m) => m.id === slug);
+  return hit?.name ?? slug;
+}
+
+const showPicker = ref(false);
 const frequency = ref('Every morning');
 const frequencies = ['Every morning', 'Every 6 hours', 'Hourly', 'Manual only'];
 const notifyStrong = ref(true);
@@ -238,6 +292,19 @@ const showAbout = ref(false);
 .link { color: var(--accent); }
 .field { margin-bottom: 4px; }
 .ghost { color: var(--text-2); border-color: var(--border-strong); }
+
+.prefs { border: 1px solid var(--hair); border-radius: 10px; background: #fff; margin-bottom: 8px; overflow: hidden; }
+.prefs__row { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-bottom: 1px solid var(--hair-light); }
+.prefs__row:last-child { border-bottom: 0; }
+.prefs__meta { flex: 1; min-width: 0; }
+.prefs__name { font-size: 13.5px; font-weight: 600; color: #3a3530; }
+.prefs__slug { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prefs__default { font: 600 11px/1 var(--font-mono); letter-spacing: 0.04em; color: var(--accent); padding: 4px 8px; border-radius: 6px; background: var(--accent-tint); }
+.prefs__action { color: var(--text-2); border-color: var(--hair); }
+.prefs__action--remove { color: var(--muted); }
+.prefs-empty { font-size: 13px; color: var(--muted); padding: 10px 0 4px; }
+.prefs-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.prefs-actions__hint { font-size: 12px; color: var(--muted); }
 
 .test { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 .test__ok { display: inline-flex; align-items: center; gap: 7px; font: 600 12.5px/1 var(--font-ui); color: var(--olive-text); }
