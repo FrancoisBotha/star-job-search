@@ -3,7 +3,7 @@
  * Opens the app in a frameless 1320×880 window — the design's native size —
  * with its own in-app title bar and window controls (see MainLayout.vue).
  */
-import { app, BrowserWindow, Menu, ipcMain, safeStorage } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, safeStorage, type WebContents } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJobBrowser } from './browser-surface';
@@ -11,6 +11,7 @@ import { createSitesStore, openSitesDatabase, registerSitesIpc } from './sites';
 import { createApiKeyStore, registerApiKeyIpc } from './apiKey';
 import { createLlmCatalogue, registerLlmCatalogueIpc } from './llmCatalogue';
 import { createPreferredModelsStore, registerPreferredModelsIpc } from './preferredModels';
+import { startMcpBrowserServer, type RunningMcpBrowserServer } from './mcp-browser-server';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -24,6 +25,22 @@ if (process.env.DEV) {
 }
 
 let mainWindow: BrowserWindow | undefined;
+
+// Active-target seam (EXTR-001). Tool calls into the in-process MCP browser
+// server resolve their target via getActiveTarget() so a later ticket can
+// retarget to a hidden crawler webContents without changing tool definitions.
+let jobBrowser: ReturnType<typeof createJobBrowser> | undefined;
+let activeTargetOverride: WebContents | undefined;
+let mcpBrowserServer: RunningMcpBrowserServer | undefined;
+
+export function getActiveTarget(): WebContents | undefined {
+  // Default: the Discover-tab embedded browser. Override wins when set.
+  return activeTargetOverride ?? jobBrowser?.view?.webContents;
+}
+
+export function setActiveTarget(wc: WebContents | undefined): void {
+  activeTargetOverride = wc;
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -57,7 +74,7 @@ function createWindow() {
 
   // Wire the embedded job-site browser surface (partitioned session,
   // preload-bridge channels). See src-electron/browser-surface.ts.
-  createJobBrowser(mainWindow);
+  jobBrowser = createJobBrowser(mainWindow);
 
   // Wire the persisted job-sites store + IPC. The DB file lives under the
   // OS-standard userData dir so it survives app restarts (FR-002).
@@ -105,7 +122,17 @@ ipcMain.on('window:toggle-maximize', () => {
 });
 ipcMain.on('window:close', () => mainWindow?.close());
 
-void app.whenReady().then(createWindow);
+void app.whenReady().then(async () => {
+  createWindow();
+  // EXTR-001: bring up the in-process MCP browser server. Failure here must
+  // never crash the app — startMcpBrowserServer catches and logs internally,
+  // and we keep the optional return so close() can run on shutdown.
+  mcpBrowserServer = await startMcpBrowserServer({ getActiveTarget });
+});
+
+app.on('will-quit', () => {
+  void mcpBrowserServer?.close();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
