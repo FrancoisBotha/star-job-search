@@ -1,21 +1,167 @@
-# Architecture Overview
+# Architecture: Star Job Search
 
-## System Architecture
+## 1. What We're Building
 
-The application follows a layered architecture:
+Star Job Search is a cross-platform Electron desktop application (Vue 3 + Quasar
+renderer, Node main process) that automates the job-search loop locally. It drives
+an embedded browser to scrape public job listings, scores each one 1–5 stars
+against the user's profile with a deterministic, explainable algorithm, and uses
+the user's own OpenRouter key to draft tailored CVs and cover letters. The
+defining architectural property is **local-first, single-user privacy**: all
+personal data (CV, profile, API key, listings, applications) stays on the device,
+with exactly two outbound network paths — user-configured job-site scrapes and
+opted-in OpenRouter LLM calls. See PRD at
+`docs/Product Requirements Document/PRD.md`.
 
-- **Presentation Layer** - Vue.js SPA
-- **API Layer** - RESTful services
-- **Business Logic Layer** - Domain services
-- **Data Layer** - PostgreSQL + Redis
+**Current state.** A working prototype exists, but it is a **UI shell with sample
+data** — the entire main-process backend is greenfield. What's marked *built* vs.
+*to build* below reflects that line honestly.
 
-## Technology Stack
+## 2. Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Frontend | Vue.js 3, Vite |
-| Backend | Node.js, Express |
-| Database | PostgreSQL 15 |
-| Cache | Redis 7 |
-| Auth | JWT + OAuth 2.0 |
-| Deployment | Docker, Kubernetes |
+| Layer | Choice | Reason |
+|---|---|---|
+| Shell | Electron 42 | Cross-platform desktop (mac/Win/Linux) from one codebase; gives an embedded browser for scanning. |
+| Renderer | Vue 3 + Quasar 2 + Pinia | *Built.* Quasar supplies the component set and the Electron build mode. |
+| Language | TypeScript (strict) | Per scaffold; enables the unit-tested deterministic scorer. |
+| Persistence | SQLite via `better-sqlite3` (main process) | *To build.* Transactional, fast local queries, single-file backup. |
+| Secret storage | Electron `safeStorage` (Keychain/DPAPI/libsecret) | *To build.* OS-native secure store for the OpenRouter key only. |
+| Scanning | Electron `BrowserView`/`<webview>`, partitioned session, per-site adapters | *To build.* Loads public listings; adapters isolate per-site breakage. |
+| LLM | OpenRouter via the user's own key | *To build.* No bundled model; the user controls cost and what data is sent. |
+
+Transitive dev dependencies (autoprefixer, vue-tsc, eslint, etc.) are omitted —
+only the choices that shape the architecture are listed.
+
+## 3. How It's Put Together
+
+Star is a two-process Electron app with a hard security boundary between them. The
+split *is* the architecture: the **renderer** is untrusted with secrets and
+touches no network or disk directly; the **main** process owns all data, secrets,
+network, and the embedded scan browser. They talk over IPC through a vetted
+preload bridge.
+
+**Renderer (Vue 3 + Quasar) — *built.*** All UI: the eight pages, the
+`StarRating` / `ScoreBar` / `StatusPill` components, the custom frameless title
+bar in `MainLayout`, the Studio theme, and a Pinia store. Today the store hydrates
+from `src/data/sample.ts` (`MATCHES`, `SAMPLE_API_KEY`); in the target it hydrates
+from main over IPC and holds no secrets.
+
+**Main (Node) — *greenfield, to build.*** Five components, each a clear
+responsibility:
+
+- **Scan Orchestrator + Scheduler** — opens the embedded browser per enabled site,
+  runs the per-site adapter, enforces robots.txt and rate limits, streams
+  `ScanSource` progress over IPC, and persists listings. The scheduler fires
+  cadence-based scans and catches missed windows on wake/launch.
+- **Scoring Engine** — pure and deterministic:
+  `(listing, profile, weights) → factor sub-scores + composite + stars/%`. No LLM
+  involvement. Unit-tested against fixtures.
+- **CV Parser** — runs off-thread (worker / utility process) so parsing never
+  blocks the UI.
+- **LLM Gateway** — the *only* path to OpenRouter; injects the key from secure
+  storage at call time so the key never reaches the renderer; handles timeouts and
+  retries.
+- **Backup Writer** — serialises state (minus the key) to the user-chosen folder
+  on triggers, with coalescing of rapid triggers.
+
+**Where data lives.** The source of truth is a local SQLite database
+(`better-sqlite3`) in main, holding listings, scores, applications, suggestions,
+sites, settings, and profile metadata. CV binaries are files on disk referenced by
+path from SQLite. The OpenRouter key lives *only* in OS-secure storage and is never
+written to SQLite, backups, logs, or renderer state. (Full table-level model: PRD §8.)
+
+**The boundary that defines the app — exactly two egress paths, both auditable:**
+
+```
+RENDERER (Vue/Quasar, no secrets)
+   │  IPC via preload bridge (CV picker · backup folder · key store · scan progress)
+   ▼
+MAIN (Node) ── owns SQLite + OS-secure key store
+   ├─ Embedded browser  ──HTTPS──▶  user-listed job sites   (robots + rate-limited)
+   └─ LLM Gateway       ──HTTPS──▶  OpenRouter               (user's key, opted-in)
+```
+
+This single diagram earns its place: the two-egress trust boundary is the one
+non-obvious, load-bearing flow in the system. Everything else is prose.
+
+Note the **preload bridge is the current gap**: today it exposes only `starWindow`
+(title-bar controls). The CV-picker, backup-folder, and key-store channels are the
+first real backend work — the preload file itself flags them as future bridges.
+
+## 4. Key Decisions
+
+- **Electron, not Tauri/native:** the product *needs* an embedded browser to scan
+  public listings — Electron's `BrowserView`/`<webview>` is the cleanest way to
+  drive one. Tauri's webview is harder to partition for scraping.
+- **SQLite (`better-sqlite3`) in main, not IndexedDB in the renderer:** secrets and
+  compute belong on the trusted side of the boundary; SQLite also gives
+  transactional integrity and trivial single-file backup. IndexedDB would put the
+  data store in the untrusted renderer.
+- **Deterministic in-app scorer, not LLM scoring:** the same
+  `(listing, profile, weights)` must always yield the same star score, and the
+  breakdown must reconcile exactly. The LLM is for tailoring only — scores never
+  depend on it, so they stay explainable and stable even when OpenRouter is down.
+- **Per-site adapters behind one interface, not a generic scraper:** each site
+  declares its own URL template, selectors, and pagination; one site breaking or
+  changing layout can't crash the scan or affect others. Adding a site is config +
+  adapter, not a core change.
+- **Embedded browser in a partitioned session, isolated from the app renderer:**
+  site cookies and JS can't touch app state — the scrape sandbox stays separate
+  from the trusted UI.
+- **OpenRouter key in OS-secure storage only, never in SQLite/backups/state:** it's
+  the one secret in the system; isolating it there makes the "key never leaks"
+  guarantee structural rather than a convention.
+- **No auto-apply, human-in-the-loop:** Star drafts and tracks but never submits —
+  a deliberate product *and* risk boundary (ToS / accuracy), so the architecture
+  has no employer-submission path at all.
+- **Scheduler in main, no external daemon:** background scans run inside the app's
+  main process on a cadence; nothing extra to install, and missed windows are
+  caught on wake/launch.
+
+Obvious choices (TypeScript strict, Pinia for Vue state) are left out — they aren't
+decisions anyone would second-guess.
+
+## 5. Security & Data
+
+**Trust boundary.** The user's own machine. The renderer is treated as untrusted
+with secrets: `contextIsolation: true`, `nodeIntegration: false`, and native
+capability reaches it *only* through vetted preload channels (CV picker, backup
+folder, key store, scan progress). The scan browser runs in a separate partitioned
+session so a job site's cookies or JS can never reach app state.
+
+**The one secret.** The OpenRouter API key lives *only* in OS-secure storage
+(`safeStorage` → Keychain / DPAPI / libsecret). It is never written to SQLite,
+never included in backups, never logged, and never present in renderer state — the
+LLM Gateway injects it at call time.
+
+**Data at rest.** Everything else (profile, parsed CV text, listings, scores,
+applications, suggestions, sites, settings) is stored in cleartext in the local
+SQLite database at standard user permissions; CV source files sit on disk
+referenced by path. There is no remote store and no sync. Whether backups are
+encrypted with a user passphrase is an open decision (PRD §13 Q2 / NFR-S6) — until
+decided, backups are plaintext local files and exclude the key.
+
+**Egress.** Exactly two outbound paths exist, both user-driven and auditable: the
+embedded browser to user-configured job sites (robots.txt-respecting,
+rate-limited), and the LLM Gateway to OpenRouter (user's key, opted-in, after a
+one-time "here's what's sent" disclosure). No telemetry or analytics endpoint ships
+in v1; any analytics is computed locally.
+
+**Compliance.** None mandated for a single-user local tool. The live risk is the
+*legal/ToS posture on scraping*, not data-protection compliance — handled by the
+public-listing-only + human-in-the-loop + user-configurable-sites design
+(PRD §13 R1/Q3), not by anything in the storage layer.
+
+## 6. Open Questions
+
+The PRD's §13 carries the full register of eight open questions (Q1–Q8) with owners
+and deadlines. Only three are *architectural* — they change how the code is built;
+the rest are product/legal/tuning calls and stay in the PRD:
+
+- **Backup encryption (PRD Q2 / NFR-S6):** plaintext local files, or encrypted with
+  a user passphrase? Changes the Backup Writer and restore flow. *Owner: Eng + PM.*
+- **Default OpenRouter model + deprecation handling (PRD Q6):** affects how the LLM
+  Gateway abstracts model selection and fallback. *Owner: Eng.*
+- **Tailored-CV output fidelity (PRD Q8):** preserve original PDF/DOCX layout, or
+  emit plain/markdown the user re-formats? Determines whether the tailoring path
+  needs a document-rendering stage at all. *Owner: PM + Eng.*
