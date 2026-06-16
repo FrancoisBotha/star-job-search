@@ -2,6 +2,44 @@
 
 export type AppStatus = 'Saved' | 'Applied' | 'Interviewing' | 'Offer' | 'Rejected';
 
+/**
+ * Status flags for an extracted job posting (EXTR-007). Mirrors the
+ * main-process contract used by `board:setStatus` (extraction.ts) and the
+ * `jobs.status` column in `star.db`. The set is intentionally open-string in
+ * the persistence layer; this union enumerates the values the renderer uses.
+ */
+export type JobStatus =
+  | 'new'
+  | 'seen'
+  | 'not_interested'
+  | 'saved'
+  | 'applied'
+  | 'hidden';
+
+/**
+ * Renderer-side mirror of the main-process JobRecord (src-electron/jobs.ts).
+ * Returned by `window.starBoard.list()` (EXTR-006) and stored in the app
+ * store under `state.jobs`.
+ */
+export interface JobRecord {
+  sourceId: string;
+  hostname: string;
+  url: string;
+  title?: string | null;
+  company?: string | null;
+  location?: string | null;
+  description?: string | null;
+  postedAt?: number | null;
+  fetchedAt: number;
+  status?: JobStatus | string;
+}
+
+/** Filter accepted by `window.starBoard.list()`. */
+export interface BoardListFilter {
+  status?: JobStatus | string;
+  excludeStatus?: JobStatus | string;
+}
+
 /** A tracked application row in the Applications history. */
 export interface Application {
   mono: string;

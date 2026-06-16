@@ -1,7 +1,13 @@
 import { defineStore } from 'pinia';
 import { MATCHES } from 'src/data/sample';
 import { deriveCatalogue, type DerivedModel } from 'src/data/orModels';
-import type { AppStatus, Match } from 'src/types/models';
+import type {
+  AppStatus,
+  BoardListFilter,
+  JobRecord,
+  JobStatus,
+  Match,
+} from 'src/types/models';
 
 export type AppFilter = 'All' | AppStatus;
 export type TailorTab = 'cv' | 'letter';
@@ -20,6 +26,26 @@ interface ModelsError {
 }
 
 export type ConnectionStatus = 'idle' | 'testing' | 'ok' | 'error';
+
+/**
+ * Normalised progress snapshot exposed to the UI (EXTR-007 AC2). The raw
+ * StarExtractProgressEvent carries phase-specific keys (current/total,
+ * imported/skipped, foundOnPage, etc.); this shape flattens the ones a
+ * generic progress bar needs into a single object.
+ */
+export interface ExtractProgressSnapshot {
+  phase: string;
+  message: string | null;
+  done: number | null;
+  total: number | null;
+}
+
+/**
+ * Cleanup handle returned by `window.starExtract.onProgress`. Held outside
+ * the Pinia state so the function reference is never serialised or made
+ * reactive — it only needs to live for the lifetime of the subscription.
+ */
+let extractProgressUnsubscribe: (() => void) | null = null;
 
 interface AppState {
   filter: AppFilter;
@@ -45,6 +71,11 @@ interface AppState {
   workMode: 'Remote' | 'Hybrid' | 'On-site';
   backupFolder: string;
   autoBackup: boolean;
+  // Job board (EXTR-007)
+  jobs: JobRecord[];
+  isExtracting: boolean;
+  extractProgress: ExtractProgressSnapshot | null;
+  extractError: string | null;
 }
 
 export const useAppStore = defineStore('app', {
@@ -67,6 +98,10 @@ export const useAppStore = defineStore('app', {
     workMode: 'Remote',
     backupFolder: '~/Documents/Star Backups',
     autoBackup: true,
+    jobs: [],
+    isExtracting: false,
+    extractProgress: null,
+    extractError: null,
   }),
 
   getters: {
@@ -240,6 +275,104 @@ export const useAppStore = defineStore('app', {
       const bridge = typeof window !== 'undefined' ? window.starSites : undefined;
       if (bridge) await bridge.remove(id);
       this.sites = this.sites.filter((s) => s.id !== id);
+    },
+    /**
+     * Fetch the extracted job postings via `board:list`. Optional filter is
+     * passed through verbatim so callers can request only e.g. unseen jobs.
+     * No-ops when the bridge is absent (browser SPA build).
+     */
+    async listJobs(filter?: BoardListFilter) {
+      const bridge = typeof window !== 'undefined' ? window.starBoard : undefined;
+      if (!bridge) return;
+      const rows = await bridge.list(filter);
+      this.jobs = rows;
+    },
+    /**
+     * Flip a job posting's status via `board:setStatus` (EXTR-006). Mirrors
+     * the change into the local cache so the UI updates without a re-list.
+     */
+    async setJobStatus(input: { sourceId: string; status: JobStatus | string }) {
+      const bridge = typeof window !== 'undefined' ? window.starBoard : undefined;
+      if (!bridge) return;
+      await bridge.setStatus(input);
+      const job = this.jobs.find((j) => j.sourceId === input.sourceId);
+      if (job) job.status = input.status;
+    },
+    /**
+     * Open a job posting in the embedded browser via `view:open` (EXTR-006).
+     */
+    async openJob(url: string) {
+      const bridge = typeof window !== 'undefined' ? window.starBoard : undefined;
+      if (!bridge) return;
+      await bridge.open(url);
+    },
+    /**
+     * Trigger an agentic extraction run via `ai:extract` (EXTR-006). Reflects
+     * the run's ok/error outcome on the store: `isExtracting` is true for the
+     * duration of the call, and `extractError` carries the failure message on
+     * an ok:false result. The tagged-union result is returned verbatim so the
+     * caller can branch on it if needed.
+     */
+    async triggerExtract(): Promise<StarExtractResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starExtract : undefined;
+      if (!bridge) return undefined;
+      this.isExtracting = true;
+      this.extractError = null;
+      try {
+        const result = await bridge.extract();
+        if (!result.ok) this.extractError = result.error;
+        return result;
+      } finally {
+        this.isExtracting = false;
+      }
+    },
+    /**
+     * Subscribe to `extract:progress` events via `window.starExtract.onProgress`.
+     * Updates `extractProgress` (phase, message, done/total) and the
+     * `isExtracting` flag as events arrive, and stashes the cleanup function
+     * for [[unsubscribeExtractProgress]].
+     */
+    subscribeExtractProgress() {
+      const bridge = typeof window !== 'undefined' ? window.starExtract : undefined;
+      if (!bridge) return;
+      if (extractProgressUnsubscribe) {
+        extractProgressUnsubscribe();
+        extractProgressUnsubscribe = null;
+      }
+      extractProgressUnsubscribe = bridge.onProgress((event) => {
+        const e = event as Record<string, unknown>;
+        const phase = String(e.phase ?? '');
+        const message =
+          typeof e.message === 'string' ? e.message : null;
+        const done =
+          typeof e.current === 'number'
+            ? e.current
+            : typeof e.imported === 'number'
+              ? e.imported
+              : typeof e.newCount === 'number'
+                ? e.newCount
+                : typeof e.foundOnPage === 'number'
+                  ? e.foundOnPage
+                  : null;
+        const total = typeof e.total === 'number' ? e.total : null;
+        this.extractProgress = { phase, message, done, total };
+        if (phase === 'done' || phase === 'error') {
+          this.isExtracting = false;
+        } else {
+          this.isExtracting = true;
+        }
+      });
+    },
+    /**
+     * Tear down the progress subscription created by
+     * [[subscribeExtractProgress]]. Safe to call when no subscription is
+     * active.
+     */
+    unsubscribeExtractProgress() {
+      if (extractProgressUnsubscribe) {
+        extractProgressUnsubscribe();
+        extractProgressUnsubscribe = null;
+      }
     },
     dismissMatch(id: string) {
       if (!this.dismissed.includes(id)) this.dismissed.push(id);
