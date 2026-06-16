@@ -1,0 +1,135 @@
+// ============================================================
+//  Star Job Search — global styles & "Studio" design tokens
+// ============================================================
+
+:root {
+  // Surfaces
+  --bg:            #fdfcf9;
+  --rail:          #faf8f2;
+  --card:          #ffffff;
+  --canvas:        #f3f1ea;
+  --titlebar:      #f3f1ea;
+  --titlebar-bd:   #e7e3d8;
+
+  // Lines & borders
+  --hair:          #ece8dd;
+  --hair-light:    #f0ece2;
+  --input-border:  #e3ddd0;
+  --border-strong: #ddd5c4;
+
+  // Text
+  --text:          #211f1d;
+  --text-strong:   #2a2620;
+  --text-2:        #5a554a;
+  --text-3:        #7d776a;
+  --muted:         #a39d8e;
+  --faint:         #bcb6a6;
+
+  // Accent — terracotta
+  --accent:        #c2683a;
+  --accent-hover:  #a8552d;
+  --accent-tint:   #f3ede2;
+  --accent-hl:     #f6ebe0;
+
+  // Positive — olive
+  --olive:         #7a8b5a;
+  --olive-text:    #5f6b3a;
+  --olive-tint:    #eef0e3;
+
+  // Monogram
+  --mono-bg:       #f3ede2;
+  --mono-text:     #9a6b3a;
+
+  // Fonts
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-ui:    'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+  --font-mono:  'JetBrains Mono', ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  color: var(--text);
+  background: var(--canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+::placeholder { color: #b8b1a2; }
+
+// ---- Type utilities -------------------------------------------------
+.font-serif { font-family: var(--font-serif); font-weight: 400; }
+.font-mono  { font-family: var(--font-mono); }
+
+.eyebrow {
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.page-title { font-family: var(--font-serif); font-size: 34px; line-height: 1.05; margin: 0; }
+.section-title { font-family: var(--font-serif); font-size: 21px; margin: 0; }
+
+// ---- Surfaces -------------------------------------------------------
+.panel {
+  background: var(--card);
+  border: 1px solid var(--hair);
+  border-radius: 14px;
+}
+.hair { height: 1px; background: var(--hair); border: 0; }
+
+// Stat strip: serif numbers separated by vertical hairlines, no boxes
+.stat-strip {
+  display: grid;
+  border-top: 1px solid var(--hair);
+  border-bottom: 1px solid var(--hair);
+}
+.stat-strip > div { padding: 18px; border-right: 1px solid var(--hair); }
+.stat-strip > div:last-child { border-right: 0; padding-right: 0; }
+.stat-strip > div:first-child { padding-left: 0; }
+.stat-strip .stat-label { font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.stat-strip .stat-num   { font-family: var(--font-serif); font-size: 34px; line-height: 1; }
+
+// Monogram avatar (circle, list style)
+.monogram {
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  color: var(--mono-text);
+  font-family: var(--font-serif);
+  flex-shrink: 0;
+}
+.monogram--square { border-radius: 10px; border: 0; background: var(--mono-bg); }
+
+// Segmented control (filter tabs / tailor tabs)
+.segmented { display: flex; gap: 5px; background: var(--accent-tint); border-radius: 10px; padding: 4px; width: fit-content; }
+.segmented .seg {
+  font: 600 12.5px/1 var(--font-ui);
+  padding: 7px 13px; border-radius: 8px; cursor: pointer; color: var(--text-3);
+  border: 0; background: transparent;
+}
+.segmented .seg.is-active { background: var(--text-strong); color: var(--bg); }
+
+// ---- Quasar component theming (editorial overrides) -----------------
+.q-page { background: var(--bg); }
+
+// Primary button keeps terracotta + darker hover, no uppercase
+.q-btn { text-transform: none; font-weight: 600; letter-spacing: 0; }
+
+// Subtle, warm inputs
+.q-field--outlined .q-field__control { border-radius: 9px; }
+
+// Toggle uses accent when on (handled by color="primary" prop)
+
+// Scrollbars in the content area
+.app-scroll { overflow: auto; }
+.app-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.app-scroll::-webkit-scrollbar-thumb { background: #e6e1d4; border-radius: 6px; border: 3px solid transparent; background-clip: content-box; }
+
+@keyframes scanpulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .3; transform: scale(.65); }
+}
+.scan-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--olive); animation: scanpulse 1.4s ease-in-out infinite; }

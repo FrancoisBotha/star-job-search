@@ -1,0 +1,13 @@
+.DS_Store
+.thumbs.db
+node_modules
+/dist
+/src-capacitor
+/src-cordova
+/.quasar
+/.vite
+.eslintcache
+*.log*
+.env.local
+.env.*.local
+yarn-error.log
