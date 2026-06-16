@@ -1,0 +1,95 @@
+version: 1
+tools:
+  - id: claude
+    name: Claude
+    command: claude
+    rolling_window_hours: 5
+    max_concurrent: 2
+    cooldown_minutes: 5
+    enabled: true
+    budget_limit: 0
+    models:
+      - id: opus-4.7
+        name: Opus 4.7
+        model_id: claude-opus-4-7
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+      - id: sonnet-4.6
+        name: Sonnet 4.6
+        model_id: claude-sonnet-4-6
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+      - id: haiku-4.5
+        name: Haiku 4.5
+        model_id: claude-haiku-4-5-20251001
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+  - id: codex
+    name: Codex
+    command: codex
+    rolling_window_hours: 5
+    max_concurrent: 2
+    cooldown_minutes: 5
+    enabled: true
+    budget_limit: 0
+    models:
+      - id: gpt-5.4
+        name: GPT-5.4
+        model_id: gpt-5.4
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+      - id: gpt-5.4-mini
+        name: GPT-5.4 Mini
+        model_id: gpt-5.4-mini
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+      - id: gpt-5.3-codex
+        name: GPT-5.3 Codex
+        model_id: gpt-5.3-codex
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+      - id: gpt-5.2-codex
+        name: GPT-5.2 Codex
+        model_id: gpt-5.2-codex
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+      - id: gpt-5.2
+        name: GPT-5.2
+        model_id: gpt-5.2
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+      - id: gpt-5.1-codex-max
+        name: GPT-5.1 Codex Max
+        model_id: gpt-5.1-codex-max
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+      - id: gpt-5.1-codex-mini
+        name: GPT-5.1 Codex Mini
+        model_id: gpt-5.1-codex-mini
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true
+  - id: kimi
+    name: Kimi
+    command: kimi
+    rolling_window_hours: 5
+    max_concurrent: 2
+    cooldown_minutes: 5
+    enabled: true
+    budget_limit: 0
+    models:
+      - id: k2
+        name: K2
+        model_id: kimi-k2
+        rate_per_hour: 0
+        cost_per_run: 0
+        enabled: true

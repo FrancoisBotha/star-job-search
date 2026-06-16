@@ -1,0 +1,528 @@
+#!/usr/bin/env bash
+# Initialise Ombuto Code — reset project data and create starter content.
+# Clears databases, logs, features, requests, run output, backlog AND docs/
+# by default. Then populates docs/ with sample starter data.
+#
+# Usage: ./initombuto [--keep-docs] [/path/to/project]
+#   --keep-docs   Preserve existing docs/ content (only reset DB / runtime
+#                 state). Use this when you've already authored real
+#                 requirements and just want to clear scheduler state.
+#   --clear       Alias for the default behaviour (kept for backwards
+#                 compatibility with older invocations). Has no effect
+#                 since the wipe is now the default.
+#   If no path given, uses the parent of this script's directory.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Default: wipe docs/ so the project is genuinely "ready for a new project".
+# Authoring real specs over time? Pass --keep-docs to preserve them.
+CLEAR_DOCS=true
+
+# Parse arguments
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --clear) CLEAR_DOCS=true ;;
+    --keep-docs) CLEAR_DOCS=false ;;
+    *) POSITIONAL+=("$arg") ;;
+  esac
+done
+
+if [ ${#POSITIONAL[@]} -gt 0 ] && [ -d "${POSITIONAL[0]}" ]; then
+  PROJECT_ROOT="$(cd "${POSITIONAL[0]}" && pwd)"
+else
+  PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
+
+OMBUTOCODE_DIR="$PROJECT_ROOT/.ombutocode"
+DOCS="$PROJECT_ROOT/docs"
+
+if [ ! -d "$OMBUTOCODE_DIR" ]; then
+  echo "Error: No .ombutocode/ directory found at $PROJECT_ROOT" >&2
+  exit 1
+fi
+
+echo "Initialising Ombuto Code in: $PROJECT_ROOT"
+if [ "$CLEAR_DOCS" = true ]; then
+  echo "  docs/ content will be DELETED and recreated from starter templates."
+  echo "  (Pass --keep-docs to preserve existing docs/ instead.)"
+else
+  echo "  --keep-docs: existing docs/ will be left untouched."
+fi
+echo ""
+
+# ════════════════════════════════════════
+# Phase 1: Reset existing data
+# ════════════════════════════════════════
+
+echo "── Resetting data ──"
+
+# 1. Delete database files and their auto-generated backup variants.
+#    Patterns covered: *.db (canonical DBs), *.db.backup (rotation backups
+#    from the app), *.db.before-* (pre-write snapshots from ticket-write
+#    and similar tools), *.before-* (legacy plain-name snapshots like
+#    `ombutocode.db.before-review-update`). Without this, repeated init
+#    runs accumulate megabytes of stale snapshot files.
+for db in "$OMBUTOCODE_DIR"/data/*.db \
+          "$OMBUTOCODE_DIR"/data/*.db.* \
+          "$OMBUTOCODE_DIR"/data/*.before-* \
+          "$OMBUTOCODE_DIR"/planning/archive.db \
+          "$OMBUTOCODE_DIR"/planning/*.db.*; do
+  if [ -f "$db" ]; then
+    echo "  Removing $(basename "$db")"
+    rm "$db"
+  fi
+done
+
+# 2. Delete per-ticket JSON files written by ticketFileManager. These mirror
+#    the backlog DB and would survive a fresh init otherwise, making the new
+#    project look like it inherited the donor project's tickets.
+if [ -d "$OMBUTOCODE_DIR/data/tickets" ]; then
+  echo "  Clearing data/tickets/"
+  rm -f "$OMBUTOCODE_DIR"/data/tickets/*.json
+fi
+
+# 3. Delete migration artifacts
+for migrated in "$OMBUTOCODE_DIR"/planning/*.migrated; do
+  if [ -f "$migrated" ]; then
+    echo "  Removing $(basename "$migrated")"
+    rm "$migrated"
+  fi
+done
+
+# 4. Clear logs
+if [ -d "$OMBUTOCODE_DIR/logs" ]; then
+  echo "  Clearing logs/"
+  rm -f "$OMBUTOCODE_DIR"/logs/*
+fi
+
+# 5. Clear run output
+if [ -d "$OMBUTOCODE_DIR/run-output" ]; then
+  echo "  Clearing run-output/"
+  rm -f "$OMBUTOCODE_DIR"/run-output/*
+fi
+
+# 6. Delete feature specs
+if [ -d "$OMBUTOCODE_DIR/features" ]; then
+  echo "  Clearing features/"
+  rm -f "$OMBUTOCODE_DIR"/features/*.md
+fi
+
+# 7. Delete agent state
+if [ -f "$OMBUTOCODE_DIR/codingagent-state.json" ]; then
+  echo "  Removing codingagent-state.json"
+  rm "$OMBUTOCODE_DIR/codingagent-state.json"
+fi
+
+# 8. Remove the per-project single-instance lockfile, if a previous run
+#    of the app left one behind after a hard kill.
+if [ -f "$OMBUTOCODE_DIR/.instance.lock" ]; then
+  echo "  Removing .instance.lock"
+  rm "$OMBUTOCODE_DIR/.instance.lock"
+fi
+
+# 9. Remove sibling worktrees directory (created by the build pipeline).
+#    Path mirrors the convention in worktreeManager: <parent>/<name>-worktrees.
+WORKTREES_DIR="$(dirname "$PROJECT_ROOT")/$(basename "$PROJECT_ROOT")-worktrees"
+if [ -d "$WORKTREES_DIR" ]; then
+  echo "  Removing $(basename "$WORKTREES_DIR")/"
+  rm -rf "$WORKTREES_DIR"
+fi
+
+# 7. Reset backlog to empty
+BACKLOG="$OMBUTOCODE_DIR/planning/backlog.yml"
+TEMPLATE="$OMBUTOCODE_DIR/templates/backlog.yml"
+if [ -f "$TEMPLATE" ]; then
+  echo "  Resetting backlog.yml from template"
+  cp "$TEMPLATE" "$BACKLOG"
+else
+  echo "  Resetting backlog.yml to empty"
+  cat > "$BACKLOG" <<'YAML'
+version: 1
+updated_at: ""
+tickets: []
+YAML
+fi
+
+# 8. Install dependencies
+APP_DIR="$OMBUTOCODE_DIR/src"
+if [ -f "$APP_DIR/package.json" ]; then
+  echo "  Installing dependencies (npm install)..."
+  (cd "$APP_DIR" && npm install --no-audit --no-fund)
+fi
+
+echo ""
+
+# ════════════════════════════════════════
+# Phase 2: Create starter data in docs/
+# ════════════════════════════════════════
+
+if [ "$CLEAR_DOCS" = true ] && [ -d "$DOCS" ]; then
+  echo "── Clearing docs/ ──"
+  echo "  Removing all content in docs/"
+  rm -rf "$DOCS"
+  echo ""
+fi
+
+echo "── Creating starter data ──"
+
+# Create folder structure
+for dir in \
+  "Structure" \
+  "Product Requirements Document" \
+  "Architecture" \
+  "Functional Requirements" \
+  "Non-Functional Requirements" \
+  "Epics" \
+  "BDD Use Cases" \
+  "Use Cases" \
+  "Use Case Diagrams" \
+  "Class Diagrams" \
+  "Data Model" \
+  "Style Guide" \
+  "Mockups" \
+  "References" \
+  "Skills" \
+  "Test Strategy" \
+  "ScratchPad"
+do
+  if [ ! -d "$DOCS/$dir" ]; then
+    echo "  Creating docs/$dir"
+    mkdir -p "$DOCS/$dir"
+  fi
+done
+
+# ── Project Structure ──
+F="$DOCS/Structure/ProjectStructure.md"
+if [ ! -f "$F" ]; then
+  echo "  Writing Structure/ProjectStructure.md"
+  cat > "$F" << 'EOF'
+# Project Structure
+
+## My Application
+
+### Frontend
+- Web UI
+- Mobile App
+
+### Backend
+- API Gateway
+- Auth Service
+- Data Service
+
+### Infrastructure
+- Database
+- Message Queue
+- Cache
+
+---
+
+## Description
+
+This document describes the high-level system decomposition of the project.
+EOF
+fi
+
+# ── PRD ──
+F="$DOCS/Product Requirements Document/PRD.md"
+if [ ! -f "$F" ]; then
+  echo "  Writing Product Requirements Document/PRD.md"
+  cat > "$F" << 'EOF'
+# Product Requirements Document
+
+## 1. Overview
+
+This document defines the product requirements for **My Application**.
+
+## 2. Goals
+
+- Provide a seamless user experience
+- Scale to 10,000 concurrent users
+- Integrate with existing enterprise systems
+
+## 3. Target Users
+
+| Persona | Description |
+|---------|-------------|
+| End User | Primary consumer of the application |
+| Admin | Manages configuration and user access |
+| Developer | Integrates via APIs |
+
+## 4. Key Features
+
+1. User authentication and authorisation
+2. Dashboard with real-time analytics
+3. REST API for third-party integrations
+4. Notification system (email, push)
+5. Audit logging
+
+## 5. Success Metrics
+
+- 99.9% uptime
+- Page load under 2 seconds
+- User satisfaction score above 4.5/5
+EOF
+fi
+
+# ── Architecture ──
+F="$DOCS/Architecture/Architecture.md"
+if [ ! -f "$F" ]; then
+  echo "  Writing Architecture/Architecture.md"
+  cat > "$F" << 'EOF'
+# Architecture Overview
+
+## System Architecture
+
+The application follows a layered architecture:
+
+- **Presentation Layer** - Vue.js SPA
+- **API Layer** - RESTful services
+- **Business Logic Layer** - Domain services
+- **Data Layer** - PostgreSQL + Redis
+
+## Technology Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Vue.js 3, Vite |
+| Backend | Node.js, Express |
+| Database | PostgreSQL 15 |
+| Cache | Redis 7 |
+| Auth | JWT + OAuth 2.0 |
+| Deployment | Docker, Kubernetes |
+EOF
+fi
+
+# ── Functional Requirements ──
+F="$DOCS/Functional Requirements/FunctionalRequirements.md"
+if [ ! -f "$F" ]; then
+  echo "  Writing Functional Requirements/FunctionalRequirements.md"
+  cat > "$F" << 'EOF'
+# Functional Requirements
+
+| ID | Sub-System | Description | Status | Epic |
+|----|-----------|-------------|--------|------|
+EOF
+fi
+
+# ── Non-Functional Requirements ──
+F="$DOCS/Non-Functional Requirements/NonFunctionalRequirements.md"
+if [ ! -f "$F" ]; then
+  echo "  Writing Non-Functional Requirements/NonFunctionalRequirements.md"
+  cat > "$F" << 'EOF'
+# Non-Functional Requirements
+
+| ID | Sub-System | Description | Status | Epic |
+|----|-----------|-------------|--------|------|
+EOF
+fi
+
+# ── Sample Use Case ──
+F="$DOCS/Use Cases/UC-001_User_Login.md"
+if [ ! -f "$F" ]; then
+  echo "  Writing Use Cases/UC-001_User_Login.md"
+  cat > "$F" << 'EOF'
+# Use Case: User Login
+
+## 1. Overview
+- **Use Case ID:** UC-001
+- **Name:** User Login
+- **Primary Actor:** End User
+- **Description:** User authenticates to access the application
+- **Level:** User goal
+
+---
+
+## 2. Preconditions
+- User has a registered account
+- System is online and accessible
+
+---
+
+## 3. Trigger
+- User navigates to the login page
+
+---
+
+## 4. Main Success Scenario
+1. User enters email and password
+2. System validates credentials
+3. System creates a session token
+4. System redirects to dashboard
+
+---
+
+## 5. Alternate Flows
+
+### 5.1 Invalid Credentials
+- 2a. Validation fails
+- 2b. System shows error message
+- 2c. User retries
+
+### 5.2 Account Locked
+- 2a. Too many failed attempts
+- 2b. System locks account for 15 minutes
+- 2c. System shows lockout message
+
+---
+
+## 6. Postconditions
+- **Success:** User has an active session
+- **Failure:** No session created, error displayed
+EOF
+fi
+
+# ── Sample Use Case Diagram ──
+F="$DOCS/Use Case Diagrams/Authentication.mmd"
+if [ ! -f "$F" ]; then
+  echo "  Writing Use Case Diagrams/Authentication.mmd"
+  cat > "$F" << 'EOF'
+actor End User 120 200
+actor Admin 120 450
+usecase Login 400 150
+usecase Register 400 300
+usecase Reset Password 400 450
+usecase Manage Users 650 450
+association End User Login
+association End User Register
+association End User Reset Password
+association Admin Manage Users
+association Admin Login
+EOF
+fi
+
+# ── Sample Class Diagram ──
+F="$DOCS/Class Diagrams/DomainModel.mmd"
+if [ ! -f "$F" ]; then
+  echo "  Writing Class Diagrams/DomainModel.mmd"
+  cat > "$F" << 'EOF'
+class User 100 100
++id: string
++email: string
++name: string
++role: Role
+--
++login(): Session
++logout(): void
+
+class Session 400 100
++id: string
++userId: string
++token: string
++expiresAt: Date
+--
++isValid(): boolean
++refresh(): Session
+
+class Role 100 350
++id: string
++name: string
++permissions: string[]
+--
++hasPermission(p: string): boolean
+
+association User Session
+association User Role
+EOF
+fi
+
+# ── Sample Data Model ──
+F="$DOCS/Data Model/Schema.ddl"
+if [ ! -f "$F" ]; then
+  echo "  Writing Data Model/Schema.ddl"
+  cat > "$F" << 'EOF'
+CREATE TABLE users (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email       VARCHAR(255) NOT NULL UNIQUE,
+    name        VARCHAR(255) NOT NULL,
+    password    VARCHAR(255) NOT NULL,
+    role_id     UUID REFERENCES roles(id),
+    created_at  TIMESTAMPTZ DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE roles (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        VARCHAR(100) NOT NULL UNIQUE,
+    permissions TEXT[] DEFAULT '{}'
+);
+
+CREATE TABLE sessions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token       VARCHAR(512) NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE audit_log (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     UUID REFERENCES users(id),
+    action      VARCHAR(100) NOT NULL,
+    entity      VARCHAR(100),
+    entity_id   VARCHAR(255),
+    details     JSONB,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+EOF
+fi
+
+# ── Scratch Pad note ──
+F="$DOCS/ScratchPad/getting-started.txt"
+if [ ! -f "$F" ]; then
+  echo "  Writing ScratchPad/getting-started.txt"
+  cat > "$F" << 'EOF'
+# Getting Started
+
+Welcome to Ombuto Code!
+
+This scratch pad is for quick notes and ideas.
+
+## Next Steps
+- Review the PRD in the Product Requirements Document folder
+- Define your project structure
+- Add use cases for key user flows
+- Create class diagrams for your domain model
+- Fill in functional and non-functional requirements
+EOF
+fi
+
+# ── Skills from templates ──
+# Templates are organised into category sub-folders (PRD, Architecture,
+# Styling, Epics, BDD, Ticket Generation, Diagnostics, Bootstrapping, Other);
+# copy recursively, preserving the structure.
+SKILL_TEMPLATES="$OMBUTOCODE_DIR/templates/skills"
+if [ -d "$SKILL_TEMPLATES" ]; then
+  find "$SKILL_TEMPLATES" -type f -name '*.md' | while IFS= read -r skill; do
+    rel="${skill#"$SKILL_TEMPLATES"/}"
+    dest="$DOCS/Skills/$rel"
+    if [ ! -f "$dest" ]; then
+      echo "  Copying Skills/$rel"
+      mkdir -p "$(dirname "$dest")"
+      cp "$skill" "$dest"
+    fi
+  done
+fi
+
+# ── Sample Mockups ──
+MOCKUP_TEMPLATES="$OMBUTOCODE_DIR/templates/mockups"
+if [ -d "$MOCKUP_TEMPLATES" ]; then
+  for img in "$MOCKUP_TEMPLATES"/*; do
+    [ -f "$img" ] || continue
+    dest="$DOCS/Mockups/$(basename "$img")"
+    if [ ! -f "$dest" ]; then
+      echo "  Copying Mockups/$(basename "$img")"
+      cp "$img" "$dest"
+    fi
+  done
+fi
+
+# ── .gitkeep for empty folders ──
+for dir in Epics References "Test Strategy" "BDD Use Cases"; do
+  [ -f "$DOCS/$dir/.gitkeep" ] || touch "$DOCS/$dir/.gitkeep"
+done
+
+echo ""
+echo "Done! Ombuto Code has been initialised."
+echo "Run .ombutocode/buildandrun.bat to start the app."
