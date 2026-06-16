@@ -49,11 +49,11 @@
       <h2 class="section-title sec">Job sites</h2>
       <p class="lead">The boards Star opens in the embedded browser and scans. Add any site with public listings.</p>
       <div class="card card--rows">
-        <div v-for="(site, i) in store.sites" :key="site + i" class="site">
+        <div v-for="site in store.sites" :key="site.id" class="site">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#bcb6a6" stroke-width="1.4"><circle cx="8" cy="8" r="6" /><line x1="2" y1="8" x2="14" y2="8" /><path d="M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12" /></svg>
-          <span class="font-mono site__url">{{ site }}</span>
+          <span class="font-mono site__url">{{ site.host }}</span>
           <span class="site__active"><span class="site__dot" />active</span>
-          <q-btn outline no-caps dense class="site__remove" label="Remove" @click="store.removeSite(i)" />
+          <q-btn outline no-caps dense class="site__remove" label="Remove" @click="store.removeSite(site.id)" />
         </div>
         <div class="site-add">
           <q-input
@@ -126,10 +126,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
 
 const store = useAppStore();
+
+// Pull the persisted Job-sites list from main so the card reflects what
+// survived the last restart (BRWSR-003 AC2 / AC5).
+onMounted(() => {
+  void store.hydrateSites();
+});
 
 const model = ref('anthropic/claude-3.5-sonnet');
 const models = ['anthropic/claude-3.5-sonnet', 'anthropic/claude-3-opus', 'openai/gpt-4o', 'google/gemini-1.5-pro'];

@@ -24,7 +24,25 @@ interface StarBrowserApi {
   setBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<void>;
 }
 
+/** Persisted job site as returned by the sites:list / sites:add IPC channels. */
+interface StarSite {
+  id: string;
+  url: string;
+  host: string;
+  label: string;
+  enabled: boolean;
+  addedAt: number;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the persisted sites list. */
+interface StarSitesApi {
+  list: () => Promise<StarSite[]>;
+  add: (input: { url: string; label?: string }) => Promise<StarSite>;
+  remove: (id: string) => Promise<void>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
+  starSites?: StarSitesApi;
 }
