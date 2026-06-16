@@ -52,3 +52,10 @@ contextBridge.exposeInMainWorld('starApiKey', {
   getStatus: () => ipcRenderer.invoke('apiKey:getStatus'),
   clear: () => ipcRenderer.invoke('apiKey:clear'),
 });
+
+// OpenRouter model catalogue bridge (LLM-002). Returns a tagged-union result
+// so the renderer can branch on the stable error code (NO_API_KEY / AUTH_ERROR
+// / RATE_LIMITED / NETWORK_ERROR / HTTP_ERROR / BAD_RESPONSE).
+contextBridge.exposeInMainWorld('starModels', {
+  list: () => ipcRenderer.invoke('llm:listModels'),
+});

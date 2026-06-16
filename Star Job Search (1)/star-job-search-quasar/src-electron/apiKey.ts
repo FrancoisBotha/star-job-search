@@ -44,6 +44,12 @@ export interface ApiKeyStore {
   save(rawKey: string): ApiKeyStatus;
   getStatus(): ApiKeyStatus;
   clear(): void;
+  /**
+   * Returns the decrypted raw key for use by other main-process modules
+   * (e.g. the OpenRouter model catalogue in LLM-002). Stays in main —
+   * never wired to an IPC channel.
+   */
+  getRawKey(): string | null;
 }
 
 export interface ApiKeyStoreOptions {
@@ -107,6 +113,15 @@ export function createApiKeyStore(opts: ApiKeyStoreOptions): ApiKeyStore {
     },
     clear(): void {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    },
+    getRawKey(): string | null {
+      if (!fs.existsSync(filePath)) return null;
+      try {
+        const blob = fs.readFileSync(filePath);
+        return safeStorage.decryptString(blob);
+      } catch {
+        return null;
+      }
     },
   };
 }

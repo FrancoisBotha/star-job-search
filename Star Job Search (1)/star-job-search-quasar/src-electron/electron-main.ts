@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createJobBrowser } from './browser-surface';
 import { createSitesStore, openSitesDatabase, registerSitesIpc } from './sites';
 import { createApiKeyStore, registerApiKeyIpc } from './apiKey';
+import { createLlmCatalogue, registerLlmCatalogueIpc } from './llmCatalogue';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -69,6 +70,14 @@ function createWindow() {
     filePath: path.join(app.getPath('userData'), 'openrouter-key.bin'),
   });
   registerApiKeyIpc(ipcMain, apiKeyStore);
+
+  // Wire the OpenRouter model catalogue + IPC (LLM-002). The catalogue reads
+  // the decrypted key from the apiKey store, caches successful results, and
+  // de-duplicates concurrent calls so reopening Settings doesn't refetch.
+  const llmCatalogue = createLlmCatalogue({
+    getApiKey: () => apiKeyStore.getRawKey(),
+  });
+  registerLlmCatalogueIpc(ipcMain, llmCatalogue);
 
   // Keep the renderer's maximize control in sync with the real window state.
   const emitMaximized = () =>

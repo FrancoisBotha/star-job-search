@@ -54,9 +54,37 @@ interface StarApiKeyApi {
   clear: () => Promise<void>;
 }
 
+/** Single model entry returned by the OpenRouter catalogue (LLM-002). */
+interface StarModelInfo {
+  id: string;
+  name: string;
+  contextLength: number;
+  pricing: { prompt: string; completion: string };
+  created: number;
+}
+
+/** Stable failure codes for the model catalogue. Mirrors LlmCatalogueErrorCode. */
+type StarModelsErrorCode =
+  | 'NO_API_KEY'
+  | 'AUTH_ERROR'
+  | 'RATE_LIMITED'
+  | 'NETWORK_ERROR'
+  | 'HTTP_ERROR'
+  | 'BAD_RESPONSE';
+
+type StarModelsResult =
+  | { ok: true; models: StarModelInfo[] }
+  | { ok: false; code: StarModelsErrorCode; message: string };
+
+/** Bridge exposed by src-electron/electron-preload.ts for the OpenRouter catalogue. */
+interface StarModelsApi {
+  list: () => Promise<StarModelsResult>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
   starSites?: StarSitesApi;
   starApiKey?: StarApiKeyApi;
+  starModels?: StarModelsApi;
 }
