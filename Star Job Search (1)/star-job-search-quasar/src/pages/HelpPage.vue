@@ -16,6 +16,22 @@
         </div>
       </div>
 
+      <!-- Browsing job sites -->
+      <h2 class="section-title sec">Browsing job sites</h2>
+      <p class="lead">
+        Star opens public job boards inside the app so you can browse listings without leaving Star.
+        Pages render as-is for you — Star never bypasses logins, paywalls, or CAPTCHAs.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in browseSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- How the star score works -->
       <h2 class="section-title sec">How the star score works</h2>
       <p class="lead">
@@ -71,6 +87,25 @@ const steps = [
   },
 ];
 
+const browseSteps = [
+  {
+    title: 'Add a job site in Settings',
+    body: 'Open Settings → Job sites, paste a URL, and press Add. Star normalises the URL and saves the site locally so it survives a restart.',
+  },
+  {
+    title: 'Pick a site on Discover',
+    body: 'On the Discover page, choose a saved site from the dropdown. Star loads it in the embedded browser and the URL pill reflects the current page.',
+  },
+  {
+    title: 'Move back and forward',
+    body: 'Use the back/forward chevrons in the browser chrome to step through pages within the loaded site, just like a normal browser tab.',
+  },
+  {
+    title: 'Remove sites you no longer want',
+    body: 'Back in Settings → Job sites, hit Remove next to any site to drop it. It disappears from the Discover dropdown straight away.',
+  },
+];
+
 const faqs = [
   {
     q: 'Where is my data stored?',
@@ -83,6 +118,14 @@ const faqs = [
   {
     q: 'Can I change how often it scans?',
     a: 'Yes — set the auto-scan frequency under Settings → Scanning, or run a scan manually any time from the Dashboard.',
+  },
+  {
+    q: 'Is the embedded browser isolated from my Star data?',
+    a: 'Yes. The embedded browser runs in a partitioned session, so cookies and JavaScript on job sites can\'t reach your CV, profile, or app data.',
+  },
+  {
+    q: 'Why is the Discover dropdown empty?',
+    a: 'You haven\'t added a job site yet. Open Settings → Job sites and add one — it\'ll appear in the Discover dropdown straight away.',
   },
 ];
 </script>
