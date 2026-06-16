@@ -6,6 +6,7 @@
 import { app, BrowserWindow, Menu, ipcMain } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createJobBrowser } from './browser-surface';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -49,6 +50,10 @@ function createWindow() {
   } else {
     void mainWindow.loadFile('index.html');
   }
+
+  // Wire the embedded job-site browser surface (partitioned session,
+  // preload-bridge channels). See src-electron/browser-surface.ts.
+  createJobBrowser(mainWindow);
 
   // Keep the renderer's maximize control in sync with the real window state.
   const emitMaximized = () =>
