@@ -42,6 +42,29 @@ interface StarSitesApi {
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
 }
 
+/** The user's single editable Profile (CVPROF-001). */
+type StarWorkMode = 'Remote' | 'Hybrid' | 'On-site';
+interface StarProfile {
+  name: string;
+  targetRole: string;
+  yearsExperience: number | null;
+  location: string;
+  workMode: StarWorkMode;
+  salaryMin: number | null;
+  salaryCurrency: string;
+  linkedinUrl: string;
+  links: string[];
+  skills: string[];
+  strengthScore: number;
+  updatedAt: number;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the singleton Profile (CVPROF-001). */
+interface StarProfileApi {
+  get: () => Promise<StarProfile>;
+  save: (input: Partial<Omit<StarProfile, 'updatedAt'>>) => Promise<StarProfile>;
+}
+
 /** Masked status payload returned by the apiKey:* IPC channels (LLM-001). */
 interface StarApiKeyStatus {
   present: boolean;
@@ -160,6 +183,7 @@ interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
   starSites?: StarSitesApi;
+  starProfile?: StarProfileApi;
   starApiKey?: StarApiKeyApi;
   starModels?: StarModelsApi;
   starPreferredModels?: StarPreferredModelsApi;

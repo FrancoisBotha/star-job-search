@@ -8,6 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJobBrowser, JOB_BROWSER_PARTITION } from './browser-surface';
 import { createSitesStore, openSitesDatabase, registerSitesIpc } from './sites';
+import { createProfileStore, registerProfileIpc } from './profile';
 import { createApiKeyStore, registerApiKeyIpc } from './apiKey';
 import { createLlmCatalogue, registerLlmCatalogueIpc } from './llmCatalogue';
 import { createPreferredModelsStore, registerPreferredModelsIpc } from './preferredModels';
@@ -20,6 +21,10 @@ const currentDir = fileURLToPath(new URL('.', import.meta.url));
 // A focused single-window app — drop Electron's auto-generated
 // File/Edit/View/Window menu bar so it doesn't read as a generic shell.
 Menu.setApplicationMenu(null);
+
+// Windows: give the app its own taskbar identity so it groups on its own and
+// shows the Star icon instead of electron.exe's default.
+if (process.platform === 'win32') app.setAppUserModelId('com.starjobsearch.app');
 
 // Expose the renderer's DevTools protocol during development only.
 if (process.env.DEV) {
@@ -46,8 +51,16 @@ export function setActiveTarget(wc: WebContents | undefined): void {
 }
 
 function createWindow() {
+  // Windows taskbar/title use the multi-res .ico; png elsewhere. In dev the
+  // icons aren't copied next to the compiled main, so resolve them from the
+  // src-electron source; a packaged build has them beside the main process.
+  const iconName = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+  const iconPath = process.env.DEV
+    ? path.resolve(currentDir, '..', '..', 'src-electron', 'icons', iconName)
+    : path.resolve(currentDir, 'icons', iconName);
+
   mainWindow = new BrowserWindow({
-    icon: path.resolve(currentDir, 'icons/icon.png'),
+    icon: iconPath,
     width: 1320,
     height: 880,
     minWidth: 1000,
@@ -83,6 +96,10 @@ function createWindow() {
   // OS-standard userData dir so it survives app restarts (FR-002).
   const sitesDb = openSitesDatabase(path.join(app.getPath('userData'), 'star.db'));
   registerSitesIpc(ipcMain, createSitesStore(sitesDb));
+
+  // Wire the singleton Profile store + IPC (CVPROF-001). Reuses the shared
+  // star.db handle; the store creates its own `profile` table on first run.
+  registerProfileIpc(ipcMain, createProfileStore(sitesDb));
 
   // Wire the preferred-models store + IPC (LLM-003). Shares the star.db
   // handle opened above; the store creates its own `preferred_models` table

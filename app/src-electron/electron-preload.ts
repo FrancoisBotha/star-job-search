@@ -47,6 +47,14 @@ contextBridge.exposeInMainWorld('starSites', {
     ipcRenderer.invoke('sites:setEnabled', { id, enabled }),
 });
 
+// Singleton Profile bridge (CVPROF-001). `get` returns the persisted Profile
+// (or an empty default on first run); `save` upserts the edited fields and
+// returns the updated Profile.
+contextBridge.exposeInMainWorld('starProfile', {
+  get: () => ipcRenderer.invoke('profile:get'),
+  save: (input: unknown) => ipcRenderer.invoke('profile:save', input),
+});
+
 // OpenRouter API key bridge (LLM-001). The raw key never crosses this
 // boundary — save/getStatus return only { present, masked }.
 contextBridge.exposeInMainWorld('starApiKey', {
