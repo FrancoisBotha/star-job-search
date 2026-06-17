@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { createJobBrowser, JOB_BROWSER_PARTITION } from './browser-surface';
 import { createSitesStore, openSitesDatabase, registerSitesIpc } from './sites';
 import { createProfileStore, registerProfileIpc } from './profile';
+import { createCvStore, registerCvIpc } from './cv';
+import { extractCvText } from './cvTextExtractor';
 import { createApiKeyStore, registerApiKeyIpc } from './apiKey';
 import { createLlmCatalogue, registerLlmCatalogueIpc } from './llmCatalogue';
 import { createPreferredModelsStore, registerPreferredModelsIpc } from './preferredModels';
@@ -100,6 +102,18 @@ function createWindow() {
   // Wire the singleton Profile store + IPC (CVPROF-001). Reuses the shared
   // star.db handle; the store creates its own `profile` table on first run.
   registerProfileIpc(ipcMain, createProfileStore(sitesDb));
+
+  // Wire the versioned CV store + IPC (CVPROF-003). Binaries live under
+  // <userData>/cv/<profileId>/ as portable relative paths; metadata and
+  // extracted text live in the shared star.db. Text extraction is delegated
+  // to the CVPROF-002 off-thread extractor so the UI thread is never blocked.
+  registerCvIpc(
+    ipcMain,
+    createCvStore(sitesDb, {
+      storageRoot: app.getPath('userData'),
+      extractor: ({ filePath, mime }) => extractCvText({ filePath, mime }),
+    }),
+  );
 
   // Wire the preferred-models store + IPC (LLM-003). Shares the star.db
   // handle opened above; the store creates its own `preferred_models` table

@@ -55,6 +55,23 @@ contextBridge.exposeInMainWorld('starProfile', {
   save: (input: unknown) => ipcRenderer.invoke('profile:save', input),
 });
 
+// Versioned CV bridge (CVPROF-003). `upload` copies the picked file under
+// userData, extracts its text off-thread, and persists the new versioned CV
+// record; `list` returns all versions for a profile (newest first); `get`
+// loads a single version by id.
+interface CvUploadInput {
+  filePath: string;
+  fileName: string;
+  mime: 'pdf' | 'docx';
+  profileId?: string;
+}
+
+contextBridge.exposeInMainWorld('starCv', {
+  upload: (input: CvUploadInput) => ipcRenderer.invoke('cv:upload', input),
+  list: (profileId?: string) => ipcRenderer.invoke('cv:list', profileId),
+  get: (id: string) => ipcRenderer.invoke('cv:get', id),
+});
+
 // OpenRouter API key bridge (LLM-001). The raw key never crosses this
 // boundary — save/getStatus return only { present, masked }.
 contextBridge.exposeInMainWorld('starApiKey', {

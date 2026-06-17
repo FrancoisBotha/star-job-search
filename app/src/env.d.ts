@@ -65,6 +65,37 @@ interface StarProfileApi {
   save: (input: Partial<Omit<StarProfile, 'updatedAt'>>) => Promise<StarProfile>;
 }
 
+/** Versioned CV record returned by cv:* IPC channels (CVPROF-003). */
+type StarCvMime = 'pdf' | 'docx';
+interface StarCv {
+  id: string;
+  profileId: string;
+  fileName: string;
+  mime: StarCvMime;
+  /** Relative, forward-slash path under the userData root (portable). */
+  storagePath: string;
+  parsedText: string;
+  parsedFields: Record<string, unknown> | null;
+  version: number;
+  confidence: number | null;
+  uploadedAt: number;
+}
+
+/** Payload accepted by cv:upload — the picker-resolved source file. */
+interface StarCvUploadInput {
+  filePath: string;
+  fileName: string;
+  mime: StarCvMime;
+  profileId?: string;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for versioned CVs (CVPROF-003). */
+interface StarCvApi {
+  upload: (input: StarCvUploadInput) => Promise<StarCv>;
+  list: (profileId?: string) => Promise<StarCv[]>;
+  get: (id: string) => Promise<StarCv | null>;
+}
+
 /** Masked status payload returned by the apiKey:* IPC channels (LLM-001). */
 interface StarApiKeyStatus {
   present: boolean;
@@ -184,6 +215,7 @@ interface Window {
   starBrowser?: StarBrowserApi;
   starSites?: StarSitesApi;
   starProfile?: StarProfileApi;
+  starCv?: StarCvApi;
   starApiKey?: StarApiKeyApi;
   starModels?: StarModelsApi;
   starPreferredModels?: StarPreferredModelsApi;
