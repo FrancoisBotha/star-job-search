@@ -12,7 +12,7 @@
     "build": "quasar build",
     "build:electron": "quasar build -m electron",
     "type-check": "vue-tsc --noEmit -p tsconfig.json",
-    "lint": "eslint \"src/**/*.{ts,vue}\"",
+    "lint": "eslint \"src/**/*.{ts,vue}\" \"src-electron/**/*.ts\"",
     "test": "vitest run"
   },
   "dependencies": {
@@ -32,12 +32,17 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@quasar/app-vite": "^2.0.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.14.0",
     "autoprefixer": "^10.5.0",
     "electron": "^42.4.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-vue": "^9.33.0",
+    "globals": "^15.15.0",
     "typescript": "^5.5.3",
+    "typescript-eslint": "^8.61.1",
     "vitest": "^2.1.0",
     "vue-tsc": "^2.0.26"
   },
