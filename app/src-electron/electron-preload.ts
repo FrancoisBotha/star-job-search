@@ -87,6 +87,17 @@ contextBridge.exposeInMainWorld('starModels', {
   list: () => ipcRenderer.invoke('llm:listModels'),
 });
 
+// CV LLM-structuring bridge (CVPROF-004). The renderer hands in the extracted
+// CV text (from starCv.get(id).parsedText) and receives a tagged-union result
+// `{ ok: true, parsedFields, confidence }` or `{ ok: false, code, message }`
+// with a stable error code (NO_API_KEY / NO_DEFAULT_MODEL / EMPTY_TEXT /
+// AUTH_ERROR / RATE_LIMITED / NETWORK_ERROR / HTTP_ERROR / BAD_RESPONSE /
+// PARSE_ERROR / MODEL_NO_STRUCTURED_OUTPUT) so the review step can branch
+// without parsing exception messages.
+contextBridge.exposeInMainWorld('starCvStructurer', {
+  structure: (text: string) => ipcRenderer.invoke('cv:structure', text),
+});
+
 // Preferred-models bridge (LLM-003). Each call returns the updated
 // PreferredModel[] list; `add` returns a tagged union so the renderer can
 // branch on EMPTY_SLUG / DUPLICATE / LIMIT_REACHED without losing the code.

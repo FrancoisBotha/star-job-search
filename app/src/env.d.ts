@@ -136,6 +136,58 @@ interface StarModelsApi {
   list: () => Promise<StarModelsResult>;
 }
 
+/** Structured CV fields returned by cv:structure (CVPROF-004). */
+interface StarCvParsedEmployment {
+  company: string | null;
+  role: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  summary: string | null;
+}
+interface StarCvParsedEducation {
+  school: string | null;
+  qualification: string | null;
+  startDate: string | null;
+  endDate: string | null;
+}
+interface StarCvParsedFields {
+  name: string | null;
+  contact: { email: string | null; phone: string | null };
+  targetRole: string | null;
+  skills: string[];
+  employmentHistory: StarCvParsedEmployment[];
+  education: StarCvParsedEducation[];
+  totalYearsExperience: number | null;
+  location: string | null;
+}
+interface StarCvParsedConfidence {
+  overall: number;
+  perField: Record<string, number>;
+}
+
+/** Stable failure codes returned by cv:structure (CVPROF-004). Mirrors
+ *  CvStructuringErrorCode in src-electron/cvStructurer.ts. */
+type StarCvStructureErrorCode =
+  | 'NO_API_KEY'
+  | 'NO_DEFAULT_MODEL'
+  | 'EMPTY_TEXT'
+  | 'AUTH_ERROR'
+  | 'RATE_LIMITED'
+  | 'NETWORK_ERROR'
+  | 'HTTP_ERROR'
+  | 'BAD_RESPONSE'
+  | 'PARSE_ERROR'
+  | 'MODEL_NO_STRUCTURED_OUTPUT';
+
+type StarCvStructureResult =
+  | { ok: true; parsedFields: StarCvParsedFields; confidence: StarCvParsedConfidence }
+  | { ok: false; code: StarCvStructureErrorCode; message: string };
+
+/** Bridge exposed by src-electron/electron-preload.ts for CV LLM-structuring (CVPROF-004). */
+interface StarCvStructurerApi {
+  structure: (text: string) => Promise<StarCvStructureResult>;
+}
+
 /** One row of the user's preferred-model list (LLM-003). */
 interface StarPreferredModel {
   slug: string;
@@ -228,6 +280,7 @@ interface Window {
   starSites?: StarSitesApi;
   starProfile?: StarProfileApi;
   starCv?: StarCvApi;
+  starCvStructurer?: StarCvStructurerApi;
   starApiKey?: StarApiKeyApi;
   starModels?: StarModelsApi;
   starPreferredModels?: StarPreferredModelsApi;

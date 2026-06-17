@@ -14,6 +14,7 @@ import { extractCvText } from './cvTextExtractor';
 import { createApiKeyStore, registerApiKeyIpc } from './apiKey';
 import { createLlmCatalogue, registerLlmCatalogueIpc } from './llmCatalogue';
 import { createPreferredModelsStore, registerPreferredModelsIpc } from './preferredModels';
+import { createCvStructurer, registerCvStructuringIpc } from './cvStructurer';
 import { startMcpBrowserServer, type RunningMcpBrowserServer } from './mcp-browser-server';
 import { createJobsStore } from './jobs';
 import { buildDefaultExtractor, registerExtractionIpc } from './extraction';
@@ -119,7 +120,8 @@ function createWindow() {
   // Wire the preferred-models store + IPC (LLM-003). Shares the star.db
   // handle opened above; the store creates its own `preferred_models` table
   // on first run and enforces the max-5 / single-default invariants.
-  registerPreferredModelsIpc(ipcMain, createPreferredModelsStore(sitesDb));
+  const preferredModelsStore = createPreferredModelsStore(sitesDb);
+  registerPreferredModelsIpc(ipcMain, preferredModelsStore);
 
   // Wire the OpenRouter API key store + IPC (LLM-001). The key is encrypted
   // with safeStorage and the blob lives next to the SQLite DB under userData.
@@ -136,6 +138,22 @@ function createWindow() {
     getApiKey: () => apiKeyStore.getRawKey(),
   });
   registerLlmCatalogueIpc(ipcMain, llmCatalogue);
+
+  // Wire the CV LLM-structuring + IPC (CVPROF-004). The first real OpenRouter
+  // completion call: reuses Epic 2's saved key (LLM-001) and selected default
+  // model (LLM-003) and goes through the existing https://openrouter.ai/api/v1
+  // egress (NFR-002). The renderer hands in the extracted CV text from
+  // starCv.get(...).parsedText and receives parsedFields + per-field /
+  // overall confidence flags for the review-and-edit step (FR-003, FR-004).
+  const cvStructurer = createCvStructurer({
+    getApiKey: () => apiKeyStore.getRawKey(),
+    getDefaultModel: () => {
+      const models = preferredModelsStore.list();
+      const def = models.find((m) => m.isDefault);
+      return def?.slug ?? null;
+    },
+  });
+  registerCvStructuringIpc(ipcMain, cvStructurer);
 
   // Wire the agentic extraction runtime + IPC (EXTR-006). The jobs store is
   // backed by the same star.db handle used by sites / preferred-models. The
