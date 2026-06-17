@@ -3,7 +3,7 @@
  * Opens the app in a frameless 1320×880 window — the design's native size —
  * with its own in-app title bar and window controls (see MainLayout.vue).
  */
-import { app, BrowserWindow, Menu, ipcMain, safeStorage, type WebContents } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, safeStorage, shell, type WebContents } from 'electron';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJobBrowser, JOB_BROWSER_PARTITION } from './browser-surface';
@@ -17,6 +17,7 @@ import { createPreferredModelsStore, registerPreferredModelsIpc } from './prefer
 import { startMcpBrowserServer, type RunningMcpBrowserServer } from './mcp-browser-server';
 import { createJobsStore } from './jobs';
 import { buildDefaultExtractor, registerExtractionIpc } from './extraction';
+import { registerShellIpc } from './shell';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -200,6 +201,14 @@ function createWindow() {
     emitProgress: (e) => {
       mainWindow?.webContents.send('extract:progress', e);
     },
+  });
+
+  // Wire the external-shell IPC (JOBDET-001). Opens http/https URLs in the
+  // user's OS default browser via Electron's `shell.openExternal`. Scheme
+  // validation lives in the handler so file:/javascript:/etc. never reach
+  // shell.openExternal.
+  registerShellIpc(ipcMain, {
+    openExternal: (url: string) => shell.openExternal(url),
   });
 
   // Keep the renderer's maximize control in sync with the real window state.

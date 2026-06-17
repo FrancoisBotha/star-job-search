@@ -210,6 +210,18 @@ interface StarBoardApi {
   open: (url: string) => Promise<{ ok: true }>;
 }
 
+/** Result returned by the shell:openExternal IPC channel (JOBDET-001). */
+type StarShellOpenExternalResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Bridge exposed by src-electron/electron-preload.ts for opening URLs in the
+ * user's OS default browser (JOBDET-001). Only http/https schemes are honoured
+ * — the main-process handler rejects file:/javascript:/etc.
+ */
+interface StarShellApi {
+  openExternal: (url: string) => Promise<StarShellOpenExternalResult>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
@@ -221,4 +233,5 @@ interface Window {
   starPreferredModels?: StarPreferredModelsApi;
   starExtract?: StarExtractApi;
   starBoard?: StarBoardApi;
+  starShell?: StarShellApi;
 }

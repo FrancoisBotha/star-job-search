@@ -349,6 +349,19 @@ export const useAppStore = defineStore('app', {
       await bridge.open(url);
     },
     /**
+     * Open a URL in the user's OS default browser via the `shell:openExternal`
+     * IPC channel (JOBDET-001). The main-process handler validates the scheme
+     * and opens only http/https. No-ops gracefully when the bridge is absent
+     * (browser SPA build), mirroring [[hydrateSites]] / [[openJob]]. Distinct
+     * from [[openJob]], which navigates the embedded Discover browser via
+     * `view:open` and is left unchanged.
+     */
+    async openExternal(url: string) {
+      const bridge = typeof window !== 'undefined' ? window.starShell : undefined;
+      if (!bridge) return;
+      await bridge.openExternal(url);
+    },
+    /**
      * Trigger an agentic extraction run via `ai:extract` (EXTR-006). Reflects
      * the run's ok/error outcome on the store: `isExtracting` is true for the
      * duration of the call, and `extractError` carries the failure message on

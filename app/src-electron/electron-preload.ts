@@ -129,3 +129,11 @@ contextBridge.exposeInMainWorld('starBoard', {
     ipcRenderer.invoke('board:setStatus', input),
   open: (url: string) => ipcRenderer.invoke('view:open', url),
 });
+
+// External shell bridge (JOBDET-001). Opens http/https URLs in the user's OS
+// default browser. Distinct from `starBoard.open` (which navigates the
+// embedded Discover browser via `view:open`). The main-process handler
+// enforces the http/https scheme allow-list.
+contextBridge.exposeInMainWorld('starShell', {
+  openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
+});
