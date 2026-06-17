@@ -450,9 +450,9 @@ ${(sample ?? '').slice(0, 12000)}`,
       }
 
       let title = '';
-      let company: string | null | undefined;
-      let location: string | null | undefined;
-      let description: string | null | undefined;
+      let company: string | null = null;
+      let location: string | null = null;
+      let description: string | null = null;
       try {
         const structured = llm.withStructuredOutput(JobSchema, { name: 'JobSchema' });
         const job = await structured.invoke(

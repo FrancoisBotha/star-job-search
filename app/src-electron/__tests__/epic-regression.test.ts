@@ -141,6 +141,15 @@ class FakeDatabase {
         },
       };
     }
+    if (/^UPDATE\s+sites\s+SET\s+enabled/i.test(text)) {
+      return {
+        run: (enabled: number, id: string) => {
+          const row = this.rows.find((r) => r.id === id);
+          if (row) row.enabled = enabled;
+          return { changes: row ? 1 : 0 };
+        },
+      };
+    }
     if (/^SELECT/i.test(text)) {
       return { all: () => [...this.rows].sort((a, b) => a.added_at - b.added_at) };
     }
@@ -369,8 +378,8 @@ describe('Epic AC7 — Discover empty state when no sites are configured', () =>
   });
 
   it('makes the empty state mutually exclusive with the browser chrome', () => {
-    expect(DISCOVER).toMatch(/v-if="store\.sites\.length"|v-if="hasSites"/);
-    expect(DISCOVER).toMatch(/v-else\b|v-if="!store\.sites\.length"|v-if="!hasSites"/);
+    expect(DISCOVER).toMatch(/v-if="store\.(?:enabledSites|sites)\.length"|v-if="hasSites"/);
+    expect(DISCOVER).toMatch(/v-else\b|v-if="!store\.(?:enabledSites|sites)\.length"|v-if="!hasSites"/);
   });
 });
 

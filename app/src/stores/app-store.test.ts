@@ -175,12 +175,17 @@ describe('Settings page wiring (AC1, AC3, AC4, AC6)', () => {
   });
 
   it('introduces no new design tokens, colours, or components (AC6)', () => {
-    // AC6: Studio visual system unchanged. The wiring is data-only — the
-    // template/style surface must not gain new colour literals or new
-    // component imports beyond what BRWSR-002 already had.
-    const newHexColours = settings.match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
-    // The pre-existing palette in this card is small and stable; if this
-    // count grows we have introduced new colours.
-    expect(newHexColours.length).toBeLessThanOrEqual(8);
+    // AC6: Studio visual system unchanged. This guards against palette DRIFT,
+    // not page growth — later epics legitimately expanded SettingsPage (e.g.
+    // the Epic 2 LLM-integration UI), so the same Studio colours now appear
+    // more often. What must NOT change is the SET of distinct colour literals.
+    const hexColours = (settings.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).map((c) =>
+      c.toLowerCase(),
+    );
+    const distinct = new Set(hexColours);
+    // The stable Studio palette used here: terracotta accent, white, dark
+    // text, muted, olive-green. A 6th distinct literal means a new colour crept
+    // in and should be reviewed (or moved to a var(--…) token).
+    expect(distinct.size).toBeLessThanOrEqual(5);
   });
 });

@@ -35,7 +35,7 @@ interface GraphRecord {
   routerCalls: Array<{ from: string; pick: string }>;
 }
 
-const lastGraph: { current?: GraphRecord } = {};
+const lastGraph: { current?: GraphRecord | undefined } = {};
 
 vi.mock('@langchain/langgraph', () => {
   const END = '__end__';
@@ -70,28 +70,27 @@ vi.mock('@langchain/langgraph', () => {
       return this;
     }
     compile() {
-      const graph = this;
       return {
         invoke: async (initial: S): Promise<S> => {
           let state = { ...initial } as S;
-          let current = graph.edges.get(START);
+          let current = this.edges.get(START);
           if (!current) throw new Error('graph has no entry edge from __start__');
           for (let i = 0; i < 1000; i++) {
             if (current === END) break;
-            const node = graph.nodes.get(current);
+            const node = this.nodes.get(current);
             if (!node) throw new Error(`unknown node: ${current}`);
             const update = await node(state);
             state = { ...state, ...(update ?? {}) } as S;
-            const cond = graph.conditional.get(current);
+            const cond = this.conditional.get(current);
             if (cond) {
               const pick = await cond.router(state);
-              graph.record.routerCalls.push({ from: current, pick });
+              this.record.routerCalls.push({ from: current, pick });
               const next = cond.mapping[pick];
               if (!next) throw new Error(`router for ${current} returned unknown key ${pick}`);
               current = next;
               continue;
             }
-            const next = graph.edges.get(current);
+            const next = this.edges.get(current);
             if (!next) break;
             current = next;
           }
@@ -249,9 +248,13 @@ describe('createJobExtractor — graph wiring (AC1)', () => {
     await extractor.run({ searchUrl: 'https://example.com/jobs' });
 
     const rec = lastGraph.current!;
+    // The `relearn` node (EXTR-005) re-learns selectors when cached ones
+    // enumerate nothing on page 1; it sits between discover and enumerate in
+    // registration order and is reached only via the enumerate conditional.
     expect(rec.nodes).toEqual([
       'init',
       'discover',
+      'relearn',
       'enumerate',
       'paginate',
       'dedup',
@@ -264,15 +267,20 @@ describe('createJobExtractor — graph wiring (AC1)', () => {
         ['__start__', 'init'],
         ['init', 'discover'],
         ['discover', 'enumerate'],
+        ['relearn', 'enumerate'],
         ['paginate', 'enumerate'],
         ['dedup', 'extractDetails'],
         ['extractDetails', 'persist'],
       ]),
     );
-    // enumerate is conditional: paginate or dedup
+    // enumerate is conditional: paginate, dedup, or relearn
     expect(rec.conditional).toHaveLength(1);
     expect(rec.conditional[0]!.from).toBe('enumerate');
-    expect(Object.keys(rec.conditional[0]!.mapping).sort()).toEqual(['dedup', 'paginate']);
+    expect(Object.keys(rec.conditional[0]!.mapping).sort()).toEqual([
+      'dedup',
+      'paginate',
+      'relearn',
+    ]);
   });
 });
 
@@ -288,7 +296,16 @@ describe('discover (AC2)', () => {
       learnedAt: 1,
     });
 
-    const browser = makeBrowser([{ cards: [], bodyText: {} }]);
+    // The page must yield at least one card so enumerate succeeds — an empty
+    // page would (correctly) trip the EXTR-005 relearn fallback, which DOES
+    // call the LLM. With a card present, the cached selectors are honoured and
+    // the LLM is never asked to (re)learn them.
+    const browser = makeBrowser([
+      {
+        cards: [{ text: 'A', href: 'https://example.com/view?id=1', html: '' }],
+        bodyText: { 'https://example.com/view?id=1': 'b' },
+      },
+    ]);
     const llm = makeLlm({});
 
     const extractor = mod.createJobExtractor({

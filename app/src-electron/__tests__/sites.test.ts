@@ -59,6 +59,15 @@ class FakeDatabase {
         },
       };
     }
+    if (/^UPDATE\s+sites\s+SET\s+enabled/i.test(text)) {
+      return {
+        run: (enabled: number, id: string) => {
+          const row = this.rows.find((r) => r.id === id);
+          if (row) row.enabled = enabled;
+          return { changes: row ? 1 : 0 };
+        },
+      };
+    }
     if (/^SELECT/i.test(text)) {
       return {
         all: () =>

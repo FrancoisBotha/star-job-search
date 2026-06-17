@@ -59,17 +59,17 @@ export interface ApiKeyStoreOptions {
 }
 
 /**
- * Render a key as `••••••••1234` — a fixed-length dot run plus the last 4
- * chars. The mask is a constant width (it does NOT reveal the key's real
- * length) so the status row stays compact regardless of how long the key is.
- * The renderer uses this purely for display; the raw key never leaves main.
+ * Render a key as `•••••••••••••••••••••••••1234` — every character masked with
+ * a dot except the last 4, preserving the key's length so the masked preview
+ * lines up with what the user typed. Keys of 4 chars or fewer are fully masked
+ * (nothing is revealed). The renderer uses this purely for display; the raw key
+ * never leaves main.
  */
-const MASK_DOTS = 8;
 export function maskKey(key: string): string {
   const trimmed = key ?? '';
   if (!trimmed) return '';
-  const tail = trimmed.slice(-4);
-  return '•'.repeat(MASK_DOTS) + tail;
+  if (trimmed.length <= 4) return '•'.repeat(trimmed.length);
+  return '•'.repeat(trimmed.length - 4) + trimmed.slice(-4);
 }
 
 export function createApiKeyStore(opts: ApiKeyStoreOptions): ApiKeyStore {

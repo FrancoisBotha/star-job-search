@@ -37,7 +37,9 @@ vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => {
     tool(name: string, ...rest: unknown[]) {
       const handler = rest[rest.length - 1] as (...a: unknown[]) => unknown;
       const description = typeof rest[0] === 'string' ? (rest[0] as string) : undefined;
-      this.tools.set(name, { handler, description });
+      // exactOptionalPropertyTypes: only set `description` when present rather
+      // than assigning `undefined` to the optional property.
+      this.tools.set(name, description !== undefined ? { handler, description } : { handler });
     }
     async connect() {
       this.connected = true;

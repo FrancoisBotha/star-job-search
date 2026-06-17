@@ -57,9 +57,10 @@ describe('DiscoverPage — site dropdown (AC2, AC3 / FR-004)', () => {
     expect(DISCOVER).not.toMatch(/toggle-row/);
   });
 
-  it('renders a q-select dropdown sourced from the persisted store.sites list', () => {
-    expect(DISCOVER).toMatch(/<q-select\b/);
-    // Options must derive from the persisted sites list, not a literal.
+  it('renders a site tab per active site sourced from the persisted store list', () => {
+    // EXTR replaced the original q-select dropdown with a browser-style tab
+    // strip — one tab per active site, iterated from the persisted store.
+    expect(DISCOVER).toMatch(/v-for="s in store\.enabledSites"/);
     expect(DISCOVER).toMatch(/store\.sites/);
   });
 

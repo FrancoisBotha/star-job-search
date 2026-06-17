@@ -67,10 +67,6 @@ async function importModule() {
   return await import('../extraction');
 }
 
-interface ActiveTargetLog {
-  setCalls: Array<unknown>;
-}
-
 function makeDeps(overrides: Partial<{
   visibleUrl: string;
   apiKey: string | null;

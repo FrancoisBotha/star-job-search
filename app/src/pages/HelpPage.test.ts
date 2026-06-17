@@ -34,8 +34,8 @@ describe('HelpPage — Epic 1 features documented (BRWSR-008)', () => {
     expect(HELP).toMatch(/remove/i);
   });
 
-  it('describes the Discover site dropdown', () => {
-    expect(HELP).toMatch(/dropdown/i);
+  it('describes the Discover site tabs', () => {
+    expect(HELP).toMatch(/tab/i);
   });
 
   it('describes back/forward navigation in the embedded browser', () => {

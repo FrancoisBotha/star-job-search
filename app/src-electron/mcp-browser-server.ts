@@ -91,7 +91,7 @@ export function buildMcpBrowserServer(opts: {
     'browser_get_text',
     'Return the textContent of the first element matching the CSS selector (defaults to body).',
     { selector: z.string().optional() },
-    async ({ selector }: { selector?: string }) => {
+    async ({ selector }: { selector?: string | undefined }) => {
       const sel = JSON.stringify(selector ?? 'body');
       const code = `(() => {
         const el = document.querySelector(${sel});
@@ -173,8 +173,8 @@ export function buildMcpBrowserServer(opts: {
       limit,
     }: {
       selector: string;
-      linkSelector?: string;
-      limit?: number;
+      linkSelector?: string | undefined;
+      limit?: number | undefined;
     }) => {
       const sel = JSON.stringify(selector);
       const linkSel = JSON.stringify(linkSelector ?? 'a');
@@ -202,7 +202,7 @@ export function buildMcpBrowserServer(opts: {
     'browser_outer_html',
     `Return outerHTML of the matched element (defaults to body), truncated to ${OUTER_HTML_MAX} chars.`,
     { selector: z.string().optional() },
-    async ({ selector }: { selector?: string }) => {
+    async ({ selector }: { selector?: string | undefined }) => {
       const sel = JSON.stringify(selector ?? 'body');
       const code = `(() => {
         const el = document.querySelector(${sel});
@@ -223,7 +223,7 @@ export function buildMcpBrowserServer(opts: {
       toBottom: z.boolean().optional(),
       by: z.number().optional(),
     },
-    async ({ toBottom, by }: { toBottom?: boolean; by?: number }) => {
+    async ({ toBottom, by }: { toBottom?: boolean | undefined; by?: number | undefined }) => {
       const wantBottom = toBottom === true || (by === undefined);
       const pixels = typeof by === 'number' ? by : 0;
       const code = wantBottom
@@ -294,7 +294,14 @@ export async function startMcpBrowserServer(
               const sid = transport.sessionId;
               if (sid) sessions.delete(sid);
             };
-            await server.connect(transport);
+            // The SDK's concrete transport types its optional `onclose` as
+            // `(() => void) | undefined`, which exactOptionalPropertyTypes
+            // treats as incompatible with the Transport interface's optional
+            // `onclose?`. The class does implement Transport — cast past the
+            // strict-optional mismatch.
+            await server.connect(
+              transport as unknown as Parameters<McpServer['connect']>[0],
+            );
             session = { server, transport };
             // Cover the not-yet-initialized case so close() can still see it.
             sessions.set(newId, session);

@@ -31,7 +31,7 @@ interface GraphRecord {
   routerCalls: Array<{ from: string; pick: string }>;
 }
 
-const lastGraph: { current?: GraphRecord } = {};
+const lastGraph: { current?: GraphRecord | undefined } = {};
 
 vi.mock('@langchain/langgraph', () => {
   const END = '__end__';
@@ -69,28 +69,27 @@ vi.mock('@langchain/langgraph', () => {
       return this;
     }
     compile() {
-      const graph = this;
       return {
         invoke: async (initial: S): Promise<S> => {
           let state = { ...initial } as S;
-          let current = graph.edges.get(START);
+          let current = this.edges.get(START);
           if (!current) throw new Error('graph has no entry edge from __start__');
           for (let i = 0; i < 1000; i++) {
             if (current === END) break;
-            const node = graph.nodes.get(current);
+            const node = this.nodes.get(current);
             if (!node) throw new Error(`unknown node: ${current}`);
             const update = await node(state);
             state = { ...state, ...(update ?? {}) } as S;
-            const cond = graph.conditional.get(current);
+            const cond = this.conditional.get(current);
             if (cond) {
               const pick = await cond.router(state);
-              graph.record.routerCalls.push({ from: current, pick });
+              this.record.routerCalls.push({ from: current, pick });
               const next = cond.mapping[pick];
               if (!next) throw new Error(`router for ${current} returned unknown key ${pick}`);
               current = next;
               continue;
             }
-            const next = graph.edges.get(current);
+            const next = this.edges.get(current);
             if (!next) break;
             current = next;
           }

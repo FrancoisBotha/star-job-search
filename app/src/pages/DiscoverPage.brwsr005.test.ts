@@ -67,12 +67,12 @@ describe('DiscoverPage — empty state (BRWSR-005 AC3, AC4)', () => {
     expect(DISCOVER.toLowerCase()).toMatch(/add a site in settings to start browsing/);
   });
 
-  it('hides the browser chrome and the site dropdown when no sites are configured', () => {
-    // The empty state must replace — not sit alongside — the chrome and dock.
-    // Look for a v-if on store.sites.length (the truthy branch) that guards
-    // the chrome row, and a v-else (or inverse v-if) for the empty panel.
-    expect(DISCOVER).toMatch(/v-if="store\.sites\.length"|v-if="hasSites"/);
-    expect(DISCOVER).toMatch(/v-else\b|v-if="!store\.sites\.length"|v-if="!hasSites"/);
+  it('hides the browser chrome and the site tabs when no active sites are configured', () => {
+    // The empty state must replace — not sit alongside — the chrome and tabs.
+    // Look for a v-if on store.enabledSites.length (the truthy branch) that
+    // guards the chrome row, and a v-else (or inverse v-if) for the empty panel.
+    expect(DISCOVER).toMatch(/v-if="store\.(?:enabledSites|sites)\.length"|v-if="hasSites"/);
+    expect(DISCOVER).toMatch(/v-else\b|v-if="!store\.(?:enabledSites|sites)\.length"|v-if="!hasSites"/);
   });
 });
 

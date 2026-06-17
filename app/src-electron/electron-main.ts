@@ -179,7 +179,9 @@ function createWindow() {
     buildExtractor: (input) =>
       buildDefaultExtractor({
         ...input,
-        mcpUrl: mcpBrowserServer?.url,
+        // Only set mcpUrl when the server is up — exactOptionalPropertyTypes
+        // forbids assigning `undefined` to the optional mcpUrl property.
+        ...(mcpBrowserServer?.url ? { mcpUrl: mcpBrowserServer.url } : {}),
       }),
     emitProgress: (e) => {
       mainWindow?.webContents.send('extract:progress', e);

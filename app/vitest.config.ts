@@ -5,9 +5,6 @@ export default defineConfig({
     tsconfigRaw: {
       compilerOptions: {
         target: 'es2022',
-        module: 'esnext',
-        moduleResolution: 'bundler',
-        esModuleInterop: true,
         strict: true,
       },
     },

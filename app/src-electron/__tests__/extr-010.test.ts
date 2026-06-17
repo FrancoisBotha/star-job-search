@@ -242,7 +242,7 @@ interface GraphRecord {
   conditional: Array<{ from: string; mapping: Record<string, string> }>;
 }
 
-const lastGraph: { current?: GraphRecord } = {};
+const lastGraph: { current?: GraphRecord | undefined } = {};
 
 vi.mock('@langchain/langgraph', () => {
   const END = '__end__';
@@ -280,19 +280,18 @@ vi.mock('@langchain/langgraph', () => {
       return this;
     }
     compile() {
-      const graph = this;
       return {
         invoke: async (initial: S): Promise<S> => {
           let state = { ...initial } as S;
-          let current = graph.edges.get(START);
+          let current = this.edges.get(START);
           if (!current) throw new Error('graph: no __start__ edge');
           for (let i = 0; i < 1000; i++) {
             if (current === END) break;
-            const node = graph.nodes.get(current);
+            const node = this.nodes.get(current);
             if (!node) throw new Error(`graph: unknown node ${current}`);
             const update = await node(state);
             state = { ...state, ...(update ?? {}) } as S;
-            const cond = graph.conditional.get(current);
+            const cond = this.conditional.get(current);
             if (cond) {
               const pick = await cond.router(state);
               const next = cond.mapping[pick];
@@ -300,7 +299,7 @@ vi.mock('@langchain/langgraph', () => {
               current = next;
               continue;
             }
-            const next = graph.edges.get(current);
+            const next = this.edges.get(current);
             if (!next) break;
             current = next;
           }

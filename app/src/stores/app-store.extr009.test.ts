@@ -10,8 +10,9 @@
  *  - AC3: `not_interested` jobs remain in the persisted set so dedup keeps
  *         them out of future imports; restoreNotInterested flips them back to
  *         `new`.
- *  - AC4: the StarredPage source no longer reads the mock MATCHES /
- *         visibleMatches / dismissed feed — it renders from store.visibleJobs.
+ *  - AC4: the board view (JobBoardPage — the board moved here from StarredPage
+ *         in a later epic) no longer reads the mock MATCHES / visibleMatches /
+ *         dismissed feed; it renders from store.visibleJobs.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -223,8 +224,8 @@ describe('jobs dedup keeps not_interested out of future imports (AC3)', () => {
   });
 });
 
-describe('StarredPage — board wiring (AC1, AC2, AC4)', () => {
-  const PAGE = readFileSync(path.join(SRC_DIR, 'pages', 'StarredPage.vue'), 'utf8');
+describe('JobBoardPage — board wiring (AC1, AC2, AC4)', () => {
+  const PAGE = readFileSync(path.join(SRC_DIR, 'pages', 'JobBoardPage.vue'), 'utf8');
 
   it('renders from store.visibleJobs, not the mock MATCHES feed', () => {
     expect(PAGE).toMatch(/store\.visibleJobs/);

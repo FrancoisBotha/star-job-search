@@ -58,9 +58,11 @@ describe('Epic §9 AC2 — removed site disappears from Settings AND Discover', 
   });
 });
 
-describe('Epic §9 AC3 — Discover dropdown lists exactly the persisted sites', () => {
-  it('siteOptions are computed from store.sites (no hard-coded site list)', () => {
-    expect(DISCOVER).toMatch(/store\.sites\.map\b/);
+describe('Epic §9 AC3 — Discover site tabs list exactly the persisted active sites', () => {
+  it('the site tabs are rendered from store.enabledSites (no hard-coded site list)', () => {
+    // EXTR superseded the original q-select dropdown with a browser-style tab
+    // strip — one tab per active site, sourced from the persisted store.
+    expect(DISCOVER).toMatch(/v-for="s in store\.enabledSites"/);
     // The old hard-coded toggle list must be gone.
     expect(DISCOVER).not.toMatch(/siteToggles/);
   });
@@ -124,8 +126,8 @@ describe('Epic §9 AC7 — Discover empty state when no sites are configured', (
     expect(DISCOVER.toLowerCase()).toMatch(/add a site in settings to start browsing/);
   });
 
-  it('the empty state replaces the chrome + dropdown (mutually exclusive)', () => {
-    expect(DISCOVER).toMatch(/v-if="store\.sites\.length"/);
+  it('the empty state replaces the chrome + tabs (mutually exclusive)', () => {
+    expect(DISCOVER).toMatch(/v-if="store\.enabledSites\.length"/);
     expect(DISCOVER).toMatch(/v-else\b/);
   });
 });
@@ -180,9 +182,19 @@ describe('Epic §9 AC9 — scope boundary: no scraping / extraction / scoring / 
     ['app-store.ts', STORE],
   ];
 
+  // The `extract` pattern is no longer forbidden on the renderer pieces:
+  // EXTR-008/009 legitimately wired the AI Extract button + progress and the
+  // store's extract action into DiscoverPage.vue and app-store.ts (the same
+  // reasoning that lifted the scan from main/preload above). Every other scope
+  // boundary — scraping, executeJavaScript/insertCSS, scoring, scheduling — is
+  // still enforced on all four files; the embedded surface and sites store
+  // remain extraction-free.
+  const EXTRACT_ALLOWED = new Set(['DiscoverPage.vue', 'app-store.ts']);
+
   for (const [fileName, body] of FILES) {
     for (const [label, pattern] of FORBIDDEN) {
-      it(`${fileName} contains no \"${label}\" — deferred to a later epic`, () => {
+      if (label === 'extract' && EXTRACT_ALLOWED.has(fileName)) continue;
+      it(`${fileName} contains no "${label}" — deferred to a later epic`, () => {
         expect(body, `${fileName} matched forbidden pattern ${pattern}`).not.toMatch(pattern);
       });
     }

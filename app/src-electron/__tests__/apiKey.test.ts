@@ -110,7 +110,7 @@ describe('createApiKeyStore.save (AC1, AC4, AC6)', () => {
 
     const result = store.save('sk-or-v1-rawsecret1234');
     expect(result.present).toBe(true);
-    expect(result.masked.endsWith('1234')).toBe(true);
+    expect(result.masked!.endsWith('1234')).toBe(true);
 
     expect(fs.existsSync(FILE_PATH)).toBe(true);
     const onDisk = fs.readFileSync(FILE_PATH).toString('utf8');
@@ -137,7 +137,7 @@ describe('createApiKeyStore.save (AC1, AC4, AC6)', () => {
     const store = createApiKeyStore({ safeStorage, fs, filePath: FILE_PATH });
 
     const result = store.save('   sk-or-v1-rawsecretWXYZ   ');
-    expect(result.masked.endsWith('WXYZ')).toBe(true);
+    expect(result.masked!.endsWith('WXYZ')).toBe(true);
 
     const decrypted = safeStorage.decryptString(fs.readFileSync(FILE_PATH));
     expect(decrypted).toBe('sk-or-v1-rawsecretWXYZ');
@@ -172,7 +172,7 @@ describe('createApiKeyStore.getStatus (AC1, AC3)', () => {
     store.save('sk-or-v1-rawsecret1234');
     const status = store.getStatus();
     expect(status.present).toBe(true);
-    expect(status.masked.endsWith('1234')).toBe(true);
+    expect(status.masked!.endsWith('1234')).toBe(true);
     expect(status.masked).not.toContain('rawsecret');
     // The status payload exposes only the masked form — nothing else.
     expect(Object.keys(status).sort()).toEqual(['masked', 'present']);
@@ -223,7 +223,7 @@ describe('registerApiKeyIpc — IPC channels (AC2, AC3)', () => {
       masked: string;
     };
     expect(result.present).toBe(true);
-    expect(result.masked.endsWith('1234')).toBe(true);
+    expect(result.masked!.endsWith('1234')).toBe(true);
     expect(Object.keys(result).sort()).toEqual(['masked', 'present']);
     // Raw key must never come back across IPC.
     expect(JSON.stringify(result)).not.toContain('rawsecret');
