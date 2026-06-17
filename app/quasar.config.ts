@@ -57,7 +57,10 @@ export default defineConfig(() => {
       preloadScripts: ['electron-preload'],
       inspectPort: 5858,
       bundler: 'packager',
-      packager: {},
+      packager: {
+        // electron-packager appends .ico (Windows) / .icns (macOS) automatically.
+        icon: 'src-electron/icons/icon',
+      },
     },
   };
 });
