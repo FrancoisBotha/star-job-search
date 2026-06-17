@@ -3826,6 +3826,11 @@ ipcMain.handle('filetree:readFile', async (_, relativePath) => {
   return fileTreeService.readFile(relativePath);
 });
 
+ipcMain.handle('filetree:fileExists', async (_, relativePath) => {
+  try { return fileTreeService.fileExists(relativePath); }
+  catch (e) { console.error('[FileTree] fileExists error:', e); return false; }
+});
+
 ipcMain.handle('filetree:writeFile', async (_, relativePath, content) => {
   return fileTreeService.writeFile(relativePath, content);
 });

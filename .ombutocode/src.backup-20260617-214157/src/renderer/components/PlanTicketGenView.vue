@@ -1,0 +1,503 @@
+<template>
+  <div class="tg-view">
+    <div class="tg-list-view" v-if="!sessionActive">
+      <div class="tg-header">
+        <div>
+          <h1>Ticket Generation</h1>
+          <p class="tg-subtitle">Select an epic to generate implementation tickets</p>
+        </div>
+      </div>
+
+      <div v-if="loading" class="tg-loading">Loading epics...</div>
+
+      <div v-else-if="newEpics.length === 0" class="tg-empty">
+        <span class="mdi mdi-flag-checkered"></span>
+        <p>No epics with status NEW</p>
+        <p class="tg-empty-hint">Create epics in Plan &gt; Epic Creation first, then return here to generate tickets.</p>
+      </div>
+
+      <div v-else>
+        <div class="tg-table-section">
+          <h2>Epics Ready for Ticket Generation</h2>
+          <table class="tg-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>File</th>
+                <th class="col-action"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="epic in newEpics" :key="epic.path" class="tg-row">
+                <td class="col-name">{{ epic.displayName }}</td>
+                <td class="col-status"><span class="tg-status-badge status-new">{{ epic.status }}</span></td>
+                <td class="col-path">{{ epic.path }}</td>
+                <td class="col-action">
+                  <button class="tg-btn tg-btn-primary tg-btn-sm" @click="startSession(epic)">
+                    <span class="mdi mdi-robot-outline"></span> Generate Tickets
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <!-- Epics with TICKETS status -->
+        <div v-if="ticketedEpics.length" class="tg-table-section" style="margin-top: 1.5rem;">
+          <h2>Epics with Tickets Generated</h2>
+          <table class="tg-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>File</th>
+                <th class="col-action"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="epic in ticketedEpics" :key="epic.path" class="tg-row">
+                <td class="col-name">{{ epic.displayName }}</td>
+                <td class="col-status"><span class="tg-status-badge status-tickets">{{ epic.status }}</span></td>
+                <td class="col-path">{{ epic.path }}</td>
+                <td class="col-action">
+                  <button class="tg-btn tg-btn-secondary tg-btn-sm" @click="goToBacklog">
+                    <span class="mdi mdi-format-list-bulleted"></span> Backlog
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- AI Session -->
+    <div class="tg-session-wrap" v-if="sessionActive">
+      <div class="tg-session-header">
+        <span class="mdi mdi-robot-outline"></span>
+        <span>Ticket Generation</span>
+        <span class="tg-agent-badge">{{ selectedSessionAgent }}</span>
+        <span class="tg-epic-count">{{ currentEpic?.displayName }}</span>
+        <div class="tg-spacer"></div>
+        <button class="tg-btn tg-btn-sm tg-btn-secondary" @click="stopSession">
+          <span class="mdi mdi-stop"></span> End Session
+        </button>
+      </div>
+      <div class="tg-split-pane">
+        <div class="tg-context-panel" :style="{ width: panelWidth + 'px' }">
+          <div class="tg-panel-header">
+            <label class="tg-panel-label">Skill</label>
+          </div>
+          <div class="tg-panel-body">
+            <select class="tg-skill-select" v-model="selectedSkill" @change="loadSelectedSkillContent" :disabled="agentRunning">
+              <option value="">-- None --</option>
+              <optgroup v-for="g in skillGroups" :key="g.category" :label="g.category">
+                <option v-for="s in g.skills" :key="s.path" :value="s.path">{{ s.displayName }}</option>
+              </optgroup>
+            </select>
+            <div class="tg-field-group" style="margin-top: 0.75rem;">
+              <label class="tg-panel-label">Agent</label>
+              <select class="tg-skill-select" v-model="selectedSessionAgent" :disabled="agentRunning">
+                <option v-for="a in availableAgents" :key="a" :value="a">{{ a }}</option>
+              </select>
+            </div>
+            <div class="tg-ctx-item" style="margin-top: 0.75rem;">
+              <span class="mdi mdi-flag-outline tg-ctx-icon"></span>
+              <span>{{ currentEpic?.path }}</span>
+            </div>
+            <div v-if="!agentRunning" style="margin-top: 1rem;">
+              <button class="tg-btn tg-btn-primary" @click="launchAgent" :disabled="!selectedSessionAgent">
+                <span class="mdi mdi-robot-outline"></span> Generate Tickets
+              </button>
+            </div>
+            <div class="tg-prompt-section">
+              <div class="tg-panel-label" style="margin-top: 0.75rem;">System Prompt</div>
+              <p class="tg-prompt-text">{{ sessionPrompt }}</p>
+            </div>
+          </div>
+        </div>
+        <div class="tg-resize-handle" @mousedown="startResize"></div>
+        <div class="tg-terminal-panel">
+          <div ref="terminalContainer" class="tg-terminal"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue';
+import { collectSkillFiles, filterSkillsByCategory, groupSkillFiles } from '@/utils/skills';
+import { enableTerminalPaste } from '@/utils/terminalPaste';
+
+let termInstance = null;
+let fitAddon = null;
+let resizeObserver = null;
+let shellCleanup = null;
+let exitCleanup = null;
+let sessionCounter = 0;
+
+export default {
+  name: 'PlanTicketGenView',
+  emits: ['change-view'],
+  props: {
+    // App.vue toggles this when navigating between Plan views. The component
+    // stays mounted (v-show) so the agent terminal session survives — we just
+    // need to refit xterm when the view becomes visible again, since xterm
+    // can't measure its container while display:none.
+    visible: { type: Boolean, default: true },
+  },
+  setup(props, { emit }) {
+    const sessionActive = ref(false);
+    const agentRunning = ref(false);
+    const terminalContainer = ref(null);
+    const defaultAgent = ref('');
+    const selectedSessionAgent = ref('');
+    const availableAgents = ref([]);
+    const currentShellId = ref('');
+    const sessionPrompt = ref('');
+    const panelWidth = ref(300);
+    const loading = ref(true);
+
+    const allEpics = ref([]);
+    const currentEpic = ref(null);
+    const skillFiles = ref([]);
+    const skillGroups = computed(() => groupSkillFiles(skillFiles.value));
+    const selectedSkill = ref('');
+    const selectedSkillContent = ref('');
+
+    const newEpics = computed(() => allEpics.value.filter(e =>
+      e.status.toUpperCase() === 'NEW'
+    ));
+
+    const ticketedEpics = computed(() => allEpics.value.filter(e =>
+      e.status.toUpperCase() === 'TICKETS'
+    ));
+
+    function goToBacklog() {
+      // Switch to Build mode and navigate to backlog
+      if (window.__planNavigate) {
+        // This only works for plan views, so emit directly
+      }
+      emit('change-view', 'backlog');
+    }
+
+    async function loadEpics() {
+      loading.value = true;
+      try {
+        const tree = await window.electron.ipcRenderer.invoke('filetree:scan');
+        if (tree && tree.children) {
+          const folder = tree.children.find(c => c.name === 'Epics');
+          if (folder && folder.children) {
+            const files = folder.children.filter(f => f.type === 'file' && f.name.endsWith('.md'));
+            const loaded = [];
+            for (const f of files) {
+              let status = 'NEW';
+              try {
+                const content = await window.electron.ipcRenderer.invoke('filetree:readFile', f.path);
+                const fmMatch = content.match(/^---\s*\n([\s\S]*?)\n---/);
+                if (fmMatch) {
+                  const sm = fmMatch[1].match(/^status:\s*(.+)/m);
+                  if (sm) status = sm[1].trim();
+                }
+                // Handle "Status: X", "**Status:** X", "- **Status:** X"
+                const bodyStatus = content.match(/\bStatus:\*?\*?\s*(.+)/im);
+                if (bodyStatus) {
+                  const parsed = bodyStatus[1].replace(/\*\*/g, '').trim();
+                  if (parsed) status = parsed;
+                }
+              } catch (_) {}
+              loaded.push({
+                name: f.name,
+                path: f.path,
+                displayName: f.name.replace('.md', '').replace(/_/g, ' '),
+                status,
+              });
+            }
+            allEpics.value = loaded;
+          }
+        }
+      } catch (_) {}
+      loading.value = false;
+    }
+
+    async function loadSkills() {
+      try {
+        const tree = await window.electron.ipcRenderer.invoke('filetree:scan');
+        skillFiles.value = filterSkillsByCategory(collectSkillFiles(tree), 'Ticket Generation');
+        const match = skillFiles.value.find(s => s.name.toLowerCase().includes('ticket'));
+        if (match) {
+          selectedSkill.value = match.path;
+          await loadSelectedSkillContent();
+        }
+      } catch (_) {}
+    }
+
+    async function loadSelectedSkillContent() {
+      if (!selectedSkill.value) { selectedSkillContent.value = ''; return; }
+      try {
+        const content = await window.electron.ipcRenderer.invoke('filetree:readFile', selectedSkill.value);
+        selectedSkillContent.value = content.replace(/^---\s*\n[\s\S]*?\n---\s*\n/, '').trim();
+      } catch (_) { selectedSkillContent.value = ''; }
+    }
+
+    async function loadDefaultAgent() {
+      try {
+        const results = await window.electron.ipcRenderer.invoke('agent:getStartupResults');
+        const settings = await window.electron.ipcRenderer.invoke('settings:read');
+        const connected = [];
+        for (const id of ['claude', 'codex', 'kimi']) {
+          if (results?.[id]?.status === 'pass') connected.push(id);
+        }
+        availableAgents.value = connected;
+        const preferred = settings?.eval_default_agent;
+        if (preferred && results?.[preferred]?.status === 'pass') {
+          defaultAgent.value = preferred;
+        } else if (connected.length > 0) {
+          defaultAgent.value = connected[0];
+        }
+        selectedSessionAgent.value = defaultAgent.value;
+      } catch (_) {}
+    }
+
+    async function startSession(epic) {
+      if (!epic) return;
+      currentEpic.value = epic;
+      selectedSessionAgent.value = defaultAgent.value;
+      agentRunning.value = false;
+      sessionActive.value = true;
+
+      await nextTick();
+
+      const { Terminal } = await import('@xterm/xterm');
+      const { FitAddon } = await import('@xterm/addon-fit');
+      await import('@xterm/xterm/css/xterm.css');
+
+      const term = new Terminal({
+        cursorBlink: true, fontSize: 13,
+        fontFamily: "'Consolas', 'Monaco', 'Courier New', monospace",
+        theme: { background: '#0A1220', foreground: '#E8EDF3', cursor: '#4ADE80', selectionBackground: '#1F3A2E' },
+      });
+
+      fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(terminalContainer.value);
+      fitAddon.fit();
+      enableTerminalPaste(term);
+      termInstance = term;
+
+      buildPrompt();
+
+      term.write('\x1b[36mSelect a skill and agent, then click "Generate Tickets" to start.\x1b[0m\r\n');
+    }
+
+    function buildPrompt() {
+      const epic = currentEpic.value;
+      if (!epic) return;
+      const skillPrefix = selectedSkillContent.value ? selectedSkillContent.value + '\n\n' : '';
+
+      sessionPrompt.value = `${skillPrefix}Read the epic specification at "docs/${epic.path}". Also read the engineering guide at ".ombutocode/OMBUTOCODE_ENGINEERING_GUIDE.md" to understand the ticket conventions and workflow.
+
+Generate implementation tickets that break this epic into concrete development tasks. Each ticket should be added to the backlog in ".ombutocode/planning/backlog.yml" with the following fields:
+- id: OMBUTO-NNN (sequential)
+- title: clear, actionable title
+- status: backlog
+- assignee: null
+- epic_ref: docs/${epic.path}
+- acceptance_criteria: list of testable criteria
+- dependencies: list of ticket IDs this depends on (if any)
+
+Guidelines:
+- Each ticket should be completable by one agent in one session
+- Include setup/infrastructure tickets before feature tickets
+- Include test tickets where appropriate
+- Aim for 3-8 tickets per epic
+- After generating tickets, update the epic status from NEW to TICKETS
+
+Start by reading the epic. Then propose the tickets with a summary table and ask me to confirm before writing to the backlog.`;
+    }
+
+    async function launchAgent() {
+      if (!selectedSessionAgent.value || !currentEpic.value) return;
+      agentRunning.value = true;
+
+      buildPrompt();
+
+      const shellId = 'ticketgen-' + (++sessionCounter);
+      currentShellId.value = shellId;
+
+      const prompt = sessionPrompt.value;
+      const agentCmd = selectedSessionAgent.value;
+      let args;
+      if (agentCmd === 'claude') {
+        args = ['--verbose', '--dangerously-skip-permissions', prompt];
+      } else {
+        args = [];
+      }
+
+      if (termInstance) {
+        termInstance.write('\r\n\x1b[33mStarting ' + agentCmd + '...\x1b[0m\r\n');
+      }
+
+      await window.electron.ipcRenderer.invoke('agent:spawnInteractive', shellId, agentCmd, args);
+
+      if (agentCmd !== 'claude') {
+        setTimeout(() => {
+          window.electron.ipcRenderer.invoke('workspace:writeShell', shellId, prompt + '\r');
+        }, 2000);
+      }
+      setTimeout(() => { if (fitAddon) fitAddon.fit(); }, 300);
+
+      termInstance.onData((data) => {
+        window.electron.ipcRenderer.invoke('workspace:writeShell', shellId, data);
+      });
+
+      shellCleanup = window.electron.ipcRenderer.on('workspace:shellData', ({ shellId: sid, data }) => {
+        if (sid === shellId && termInstance) termInstance.write(data);
+      });
+
+      exitCleanup = window.electron.ipcRenderer.on('workspace:shellExit', ({ shellId: sid }) => {
+        if (sid === shellId && termInstance) termInstance.write('\r\n\x1b[32m✓ Session ended.\x1b[0m\r\n');
+      });
+
+      resizeObserver = new ResizeObserver(() => {
+        try {
+          if (fitAddon) fitAddon.fit();
+          if (termInstance) window.electron.ipcRenderer.invoke('workspace:resizeShell', shellId, termInstance.cols, termInstance.rows);
+        } catch {}
+      });
+      resizeObserver.observe(terminalContainer.value);
+    }
+
+    function stopSession() {
+      if (currentShellId.value) window.electron.ipcRenderer.invoke('workspace:killShell', currentShellId.value);
+      cleanup();
+      sessionActive.value = false;
+      loadEpics();
+    }
+
+    function cleanup() {
+      if (resizeObserver) { resizeObserver.disconnect(); resizeObserver = null; }
+      if (shellCleanup) { shellCleanup(); shellCleanup = null; }
+      if (exitCleanup) { exitCleanup(); exitCleanup = null; }
+      if (termInstance) { termInstance.dispose(); termInstance = null; }
+      fitAddon = null;
+    }
+
+    function startResize(e) {
+      const startX = e.clientX;
+      const startW = panelWidth.value;
+      function onMove(ev) { panelWidth.value = Math.max(200, Math.min(500, startW + ev.clientX - startX)); }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (fitAddon) setTimeout(() => fitAddon.fit(), 50);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    }
+
+    onMounted(() => { loadEpics(); loadDefaultAgent(); loadSkills(); });
+
+    // When the view becomes visible: refit the terminal AND refresh the epic
+    // list. Because this view stays mounted across Plan navigation (so the
+    // agent terminal session survives), onMounted only fires once — without
+    // this watcher, an epic created in Plan → Epics never appears here until
+    // the whole app is reloaded.
+    watch(() => props.visible, (isVisible) => {
+      if (!isVisible) return;
+      if (fitAddon) {
+        requestAnimationFrame(() => { try { fitAddon.fit(); } catch (_) {} });
+      }
+      loadEpics();
+    });
+
+    onBeforeUnmount(() => {
+      if (currentShellId.value) window.electron.ipcRenderer.invoke('workspace:killShell', currentShellId.value);
+      cleanup();
+    });
+
+    return {
+      sessionActive, agentRunning, terminalContainer, defaultAgent, selectedSessionAgent, availableAgents,
+      sessionPrompt, panelWidth, loading,
+      allEpics, newEpics, ticketedEpics, currentEpic, goToBacklog,
+      skillFiles, skillGroups, selectedSkill, loadSelectedSkillContent,
+      startSession, stopSession, launchAgent, startResize,
+    };
+  }
+};
+</script>
+
+<style scoped>
+.tg-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-color, #161a1f); color: var(--text-color, #d4d8dd); }
+.tg-list-view { padding: 2rem; overflow-y: auto; flex: 1; }
+.tg-header { margin-bottom: 1.5rem; }
+.tg-header h1 { margin: 0 0 0.25rem; font-size: 1.5rem; font-weight: 600; }
+.tg-subtitle { margin: 0; color: var(--text-muted, #8b929a); font-size: 0.9rem; }
+
+.tg-loading { color: var(--text-muted); padding: 2rem; text-align: center; }
+.tg-empty { display: flex; flex-direction: column; align-items: center; padding: 3rem; text-align: center; color: var(--text-muted); border: 1px dashed var(--border-color); border-radius: 8px; }
+.tg-empty .mdi { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.4; }
+.tg-empty p { margin: 0; font-size: 0.88rem; }
+.tg-empty-hint { margin-top: 0.5rem !important; font-size: 0.82rem !important; color: var(--text-muted); opacity: 0.75; max-width: 380px; line-height: 1.5; }
+
+/* Table */
+.tg-table-section { margin-bottom: 1rem; max-width: 100%; }
+.tg-table-section h2 { font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin: 0 0 0.5rem; }
+.tg-table { width: 100%; border-collapse: collapse; }
+.tg-table th { text-align: left; padding: 0.5rem 0.75rem; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); border-bottom: 1px solid var(--border-color); }
+.tg-table td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border-color); }
+.tg-row { cursor: pointer; transition: background 0.1s; }
+.tg-row:hover { background: var(--secondary-color); }
+.col-action { width: 160px; text-align: right; }
+.col-name { font-size: 0.88rem; color: var(--text-color); font-weight: 400; }
+.col-status { width: 100px; }
+.tg-status-badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 10px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+.status-new { background: rgba(91,155,213,0.15); color: #4a90e2; }
+.status-tickets { background: rgba(229,168,48,0.15); color: #b87f0e; }
+.col-path { font-size: 0.72rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted); }
+
+/* Actions */
+.tg-actions { display: flex; align-items: center; gap: 0.75rem; max-width: 100%; margin-bottom: 1rem; }
+.tg-agent-info { font-size: 0.82rem; color: rgba(255,255,255,0.4); }
+.tg-agent-warning { font-size: 0.82rem; color: #e5a830; display: flex; align-items: center; gap: 0.3rem; }
+
+/* Buttons */
+.tg-btn { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.55rem 1.1rem; border: none; border-radius: 6px; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+.tg-btn-primary { background: #6dd4a0; color: #0A1220; }
+.tg-btn-primary:hover:not(:disabled) { background: #86efac; }
+.tg-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.tg-btn-secondary { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); }
+.tg-btn-secondary:hover { background: rgba(255,255,255,0.12); }
+.tg-btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+
+/* Session */
+.tg-session-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.tg-session-header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: #0d1720; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 0.82rem; color: rgba(255,255,255,0.7); flex-shrink: 0; }
+.tg-agent-badge { background: rgba(109,212,160,0.12); color: #6dd4a0; padding: 0.15rem 0.5rem; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+.tg-epic-count { font-size: 0.72rem; color: rgba(255,255,255,0.4); }
+.tg-spacer { flex: 1; }
+.tg-split-pane { flex: 1; display: flex; overflow: hidden; }
+.tg-context-panel { display: flex; flex-direction: column; overflow: hidden; background: #0d1720; border-right: 1px solid rgba(255,255,255,0.06); flex-shrink: 0; }
+.tg-panel-header { padding: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.06); flex-shrink: 0; }
+.tg-panel-label { font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6dd4a0; }
+.tg-panel-body { flex: 1; overflow-y: auto; padding: 1rem; }
+.tg-skill-select {
+  width: 100%; padding: 0.4rem 0.5rem; border: 1px solid rgba(255,255,255,0.1); border-radius: 5px;
+  background: #0A1220; color: var(--text-color, #d4d8dd); font-size: 0.82rem; cursor: pointer; outline: none; margin-bottom: 0.5rem;
+}
+.tg-skill-select:focus { border-color: #6dd4a0; }
+.tg-skill-select:disabled { opacity: 0.5; cursor: not-allowed; }
+.tg-field-group .tg-panel-label { display: block; margin-bottom: 0.3rem; }
+.tg-ctx-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: rgba(255,255,255,0.55); margin-bottom: 0.3rem; }
+.tg-ctx-icon { font-size: 1rem; color: #6dd4a0; }
+.tg-prompt-text { font-size: 0.75rem; line-height: 1.55; color: rgba(255,255,255,0.35); font-weight: 300; margin: 0.3rem 0 0; white-space: pre-wrap; }
+.tg-resize-handle { width: 6px; cursor: col-resize; background: transparent; flex-shrink: 0; position: relative; }
+.tg-resize-handle::after { content: ''; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: rgba(255,255,255,0.06); transition: background 0.15s; }
+.tg-resize-handle:hover::after { background: #6dd4a0; }
+.tg-terminal-panel { flex: 1; display: flex; min-width: 0; }
+.tg-terminal { flex: 1; background: #0A1220; position: relative; }
+.tg-terminal :deep(.xterm) { position: absolute; top: 0; left: 0; right: 0; bottom: 0; padding: 0.5rem; }
+.tg-terminal :deep(.xterm-screen) { height: 100% !important; }
+.tg-terminal :deep(.xterm-viewport) { overflow-y: auto !important; }
+</style>

@@ -103,6 +103,7 @@ const validChannels = [
   'filetree:deleteFolder',
   'filetree:renameFile',
   'filetree:readFile',
+  'filetree:fileExists',
   'filetree:writeFile',
   'filetree:deleteFile',
   'filetree:scanMockups',
