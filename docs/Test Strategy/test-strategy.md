@@ -81,18 +81,12 @@ npm run type-check   # vue-tsc --noEmit -p tsconfig.json
 - ESLint config: `app/eslint.config.js` (ESLint 9 flat config). It lints `src/**/*.{ts,vue}` and `src-electron/**/*.ts`; ignores `dist/`, `.quasar/`, `node_modules/`, `src-capacitor/`, `src-cordova/`. Intentionally-unused vars are marked with a leading `_` (honoured by the `no-unused-vars` rule).
 - Type-check config: `app/tsconfig.json` (strict, `exactOptionalPropertyTypes: true`).
 
-> **Known state (2026-06-17), flagged for follow-up tickets — do NOT treat as
-> blocking for an unrelated ticket:**
-> - `npm run lint` currently reports **6 real errors** (`no-useless-escape`,
->   `@typescript-eslint/no-this-alias`, one unused `ActiveTargetLog`) plus ~798
->   stylistic warnings. Lint was introduced in this refresh; the codebase has not
->   been cleaned against it yet.
-> - `npm run type-check` currently reports errors in
->   `src-electron/mcp-browser-server.ts` (MCP SDK overloads vs
->   `exactOptionalPropertyTypes`) and `vitest.config.ts` (`module` not valid in
->   `tsconfigRaw.compilerOptions`).
-> A ticket should drive each of these to zero. Until then, a per-ticket agent
-> verifies only that **its own** changes introduce no *new* lint/type errors.
+> **Baseline (2026-06-17): all three gates are green.** `npm test` (433 tests),
+> `npm run type-check` (0 errors), and `npm run lint` (0 errors; ~798 stylistic
+> warnings remain — `npm run lint -- --fix` clears most). A ticket must keep them
+> green: it must not introduce a new failing test, type error, or lint error.
+> (Lint still reports stylistic *warnings*; those are non-blocking and a separate
+> `--fix` cleanup pass can retire them.)
 
 ## 6. Coverage and reporting
 
