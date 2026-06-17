@@ -131,6 +131,14 @@ export default {
     // Buffer for the last ~4KB of output so we can pattern-match the result
     // marker even when it arrives split across pty data chunks.
     let outputBuffer = '';
+    // The agent's prompt embeds the Fix Ticket skill, which itself contains
+    // example TICKET_DOCTOR_RESULT lines. The terminal echoes that prompt back,
+    // so we must NOT match markers until the prompt has finished echoing —
+    // otherwise the echoed examples fire a premature SUCCESS. We append a unique
+    // sync token to the very end of the prompt and only start matching once it
+    // has echoed (everything before it, including the skill examples, is discarded).
+    let readyToken = '';
+    let promptEchoComplete = false;
 
     const defaultAgent = computed(() =>
       settingsStore.settings.eval_default_agent || settingsStore.settings.ad_hoc_ticket_agent || ''
@@ -170,9 +178,12 @@ You are running inside this ticket's existing git worktree on branch ticket/${t.
 
 Follow the Fix Ticket skill above precisely. End with the structured TICKET_DOCTOR_RESULT marker so the UI can offer the human a Move to Review action.`;
 
-      return skillContent.value
+      const base = skillContent.value
         ? `${skillContent.value}\n\n---\n\n${intro}`
         : intro;
+
+      readyToken = 'DOCTOR_SYNC_' + Math.random().toString(36).slice(2, 12).toUpperCase();
+      return `${base}\n\n---\n_Session sync marker — ignore this line: ${readyToken}_`;
     }
 
     function watchForResultMarker(chunk) {
@@ -181,7 +192,21 @@ Follow the Fix Ticket skill above precisely. End with the structured TICKET_DOCT
       outputBuffer = (outputBuffer + chunk).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
       if (outputBuffer.length > 8192) outputBuffer = outputBuffer.slice(-8192);
       if (doctorResult.value) return;
-      const m = outputBuffer.match(/TICKET_DOCTOR_RESULT:\s*(SUCCESS|FAIL)/i);
+
+      // Gate: ignore all output until the prompt's trailing sync token has echoed.
+      // This discards the echoed skill text (and its example result markers) so
+      // only the agent's own final output can set the result.
+      if (!promptEchoComplete) {
+        if (!readyToken) return;
+        const tokenIdx = outputBuffer.lastIndexOf(readyToken);
+        if (tokenIdx === -1) return;
+        promptEchoComplete = true;
+        outputBuffer = outputBuffer.slice(tokenIdx + readyToken.length);
+      }
+
+      // The skill mandates the marker on a line of its own, so anchor to line
+      // start to avoid matching an inline mention mid-sentence.
+      const m = outputBuffer.match(/^TICKET_DOCTOR_RESULT:\s*(SUCCESS|FAIL)/im);
       if (m) doctorResult.value = m[1].toUpperCase();
     }
 
@@ -214,6 +239,8 @@ Follow the Fix Ticket skill above precisely. End with the structured TICKET_DOCT
         const shellId = 'doctor-' + props.ticket.id + '-' + (++shellCounter);
         currentShellId.value = shellId;
 
+        outputBuffer = '';
+        promptEchoComplete = false;
         const prompt = buildPrompt();
         const agentCmd = defaultAgent.value;
         let args;

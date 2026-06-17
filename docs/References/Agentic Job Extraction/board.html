@@ -1,0 +1,112 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Job Co-pilot</title>
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font: 14px/1.45 system-ui, sans-serif; }
+      /* The panel occupies the left strip; the right area is covered by the embedded browser. */
+      #panel { width: 380px; height: 100vh; display: flex; flex-direction: column;
+               border-right: 1px solid #8883; background: Canvas; }
+      header { padding: 12px; border-bottom: 1px solid #8883; }
+      h1 { font-size: 14px; margin: 0 0 8px; }
+      button { font: inherit; padding: 7px 10px; border-radius: 7px; border: 1px solid #8886;
+               background: #6b8afd; color: #fff; cursor: pointer; }
+      button.ghost { background: transparent; color: inherit; }
+      button:disabled { opacity: .55; cursor: default; }
+      .row { display: flex; align-items: center; gap: 8px; }
+      #status { font-size: 12px; opacity: .8; margin-top: 8px; min-height: 16px; }
+      label.filter { font-size: 12px; opacity: .8; display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+      #list { flex: 1; overflow: auto; padding: 8px; }
+      .job { border: 1px solid #8883; border-radius: 9px; padding: 10px; margin-bottom: 8px; }
+      .job.ni { opacity: .5; }
+      .job .title { font-weight: 600; }
+      .job .meta { font-size: 12px; opacity: .8; margin: 3px 0 8px; }
+      .job .acts { display: flex; gap: 6px; }
+      .job .acts button { padding: 4px 8px; font-size: 12px; }
+      .empty { opacity: .6; padding: 16px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <header>
+        <h1>Job Co-pilot</h1>
+        <div class="row">
+          <button id="extract">✨ AI Extract</button>
+          <button id="refresh" class="ghost">Refresh</button>
+        </div>
+        <div id="status">Log in &amp; filter jobs in the browser, then click AI Extract.</div>
+        <label class="filter"><input type="checkbox" id="hideNI" checked /> Hide “not interested”</label>
+      </header>
+      <div id="list"><div class="empty">No jobs imported yet.</div></div>
+    </div>
+
+    <script>
+      const api = window.jobAgent;
+      const $ = (id) => document.getElementById(id);
+      const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+      async function refresh() {
+        const filter = $('hideNI').checked ? { excludeStatus: 'not_interested' } : undefined;
+        const jobs = await api.listJobs(filter);
+        const list = $('list');
+        if (!jobs.length) {
+          list.innerHTML = '<div class="empty">No jobs imported yet.</div>';
+          return;
+        }
+        list.innerHTML = jobs
+          .map((j) => {
+            const meta = [j.company, j.location, j.workplaceType, j.salary].filter(Boolean).map(esc).join(' · ');
+            const ni = j.status === 'not_interested';
+            return `<div class="job ${ni ? 'ni' : ''}" data-id="${esc(j.sourceId)}" data-url="${esc(j.url)}">
+              <div class="title">${esc(j.title)}</div>
+              <div class="meta">${meta}</div>
+              <div class="acts">
+                <button class="ghost open">Open</button>
+                <button class="ghost flag">${ni ? 'Restore' : 'Not interested'}</button>
+              </div>
+            </div>`;
+          })
+          .join('');
+      }
+
+      $('list').addEventListener('click', async (e) => {
+        const card = e.target.closest('.job');
+        if (!card) return;
+        const sourceId = card.dataset.id;
+        if (e.target.classList.contains('open')) {
+          api.open(card.dataset.url);
+        } else if (e.target.classList.contains('flag')) {
+          const restoring = card.classList.contains('ni');
+          await api.setStatus(sourceId, restoring ? 'new' : 'not_interested');
+          refresh();
+        }
+      });
+
+      $('hideNI').addEventListener('change', refresh);
+      $('refresh').addEventListener('click', refresh);
+
+      api.onProgress((p) => {
+        $('status').textContent = p.message + (p.total ? ` (${p.done}/${p.total})` : '');
+      });
+
+      $('extract').addEventListener('click', async () => {
+        const btn = $('extract');
+        btn.disabled = true;
+        $('status').textContent = 'Starting…';
+        try {
+          const res = await api.extract();
+          if (res.ok) $('status').textContent = `Done — imported ${res.summary.imported} of ${res.summary.total} listed.`;
+          else $('status').textContent = 'Failed: ' + res.error;
+        } finally {
+          btn.disabled = false;
+          refresh();
+        }
+      });
+
+      refresh();
+    </script>
+  </body>
+</html>

@@ -5,14 +5,14 @@
 
 > **How to read this document.** Sections 1–4 are product framing; 5–10 are engineering-ready
 > specification; 11–13 are go-to-market and governance. UI/UX is **not** re-specified here — it is
-> owned by the design handoff (the runnable Quasar scaffold under `Star Job Search (1)/` and the
+> owned by the design handoff (the runnable Quasar scaffold under `app/` and the
 > mockups in `docs/Mockups/`). This PRD references those artifacts and adds behaviour, data, and
 > system requirements. Every assumption is tagged **[A#]** and collected in §13.4.
 
 ### Design handoff — source of truth for UI/UX
 | Artifact | Location | Owns |
 |---|---|---|
-| Runnable scaffold | `Star Job Search (1)/star-job-search-quasar/` | Screens, components, routes, store shape |
+| Runnable scaffold | `app/` | Screens, components, routes, store shape |
 | Visual system ("Studio") | `src/css/app.scss`, `src/css/quasar.variables.scss` | Tokens, colour, type |
 | Domain types | `src/types/models.ts` | `Application`, `Match`, `ScanSource`, `Suggestion`, `STATUS_PILL` |
 | Mockups | `docs/Mockups/01..10-*.png`, `Star-Style-Guide.png` | Approved per-screen layouts |
@@ -509,4 +509,4 @@ Settings (singleton)
 
 ---
 
-*This PRD references the design handoff for all UI/UX. It does not redefine screens, components, or the Studio visual system — those are owned by `Star Job Search (1)/star-job-search-quasar/` and `docs/Mockups/`. The 1–5 star match score is the product's central motif and the contract between scanning, scoring, tailoring, and tracking.*
+*This PRD references the design handoff for all UI/UX. It does not redefine screens, components, or the Studio visual system — those are owned by `app/` and `docs/Mockups/`. The 1–5 star match score is the product's central motif and the contract between scanning, scoring, tailoring, and tracking.*

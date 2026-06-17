@@ -1,0 +1,46 @@
+{
+  "name": "star-job-search",
+  "version": "0.1.0",
+  "description": "Star Job Search — automated job search with star match scoring, CV & cover-letter tailoring, and application tracking.",
+  "productName": "Star Job Search",
+  "author": "Star",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "quasar dev",
+    "dev:electron": "quasar dev -m electron",
+    "build": "quasar build",
+    "build:electron": "quasar build -m electron",
+    "type-check": "vue-tsc --noEmit -p tsconfig.json",
+    "lint": "eslint \"src/**/*.{ts,vue}\"",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.30",
+    "@langchain/langgraph": "^0.2.36",
+    "@langchain/mcp-adapters": "^0.4.0",
+    "@langchain/openai": "^0.3.16",
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@quasar/extras": "^1.16.12",
+    "better-sqlite3": "^12.11.1",
+    "pinia": "^2.1.7",
+    "quasar": "^2.16.9",
+    "vue": "^3.4.31",
+    "vue-router": "^4.4.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@quasar/app-vite": "^2.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.14.0",
+    "autoprefixer": "^10.5.0",
+    "electron": "^42.4.0",
+    "typescript": "^5.5.3",
+    "vitest": "^2.1.0",
+    "vue-tsc": "^2.0.26"
+  },
+  "engines": {
+    "node": ">=18",
+    "npm": ">=9"
+  }
+}
