@@ -28,6 +28,86 @@ interface ModelsError {
 export type ConnectionStatus = 'idle' | 'testing' | 'ok' | 'error';
 
 /**
+ * Current parse/structure status for the latest CV (CVPROF-005). `idle` is
+ * the resting state, `extracting` is set while raw text extraction runs,
+ * `structuring` while the LLM call is in flight, `ready` on success, and
+ * `error` when either step fails.
+ */
+export type CvParseStatus =
+  | 'idle'
+  | 'extracting'
+  | 'structuring'
+  | 'ready'
+  | 'error';
+
+/**
+ * One row in the profile-strength rubric (CVPROF-005 AC4). The rubric is
+ * exposed verbatim so the Profile screen can render "what raises your
+ * strength" alongside the bar (FR-009).
+ */
+export interface StrengthRubricItem {
+  field: keyof StarProfile;
+  label: string;
+  points: number;
+  /** Scoring-relevant fields are the ones gated by the minimum-scorable
+   *  check (FR-010); editing one of these marks scores stale. */
+  scoringRelevant: boolean;
+  achieved: boolean;
+}
+
+/** Profile fields whose change invalidates existing scores (FR-010 AC5). */
+const SCORING_RELEVANT_FIELDS = new Set<keyof StarProfile>([
+  'targetRole',
+  'skills',
+  'location',
+  'workMode',
+  'yearsExperience',
+  'salaryMin',
+  'salaryCurrency',
+]);
+
+/** Per-field point allocations for the strength rubric. Sums to 100. */
+const STRENGTH_RUBRIC: ReadonlyArray<{
+  field: keyof StarProfile;
+  label: string;
+  points: number;
+}> = [
+  { field: 'targetRole', label: 'Target role', points: 20 },
+  { field: 'skills', label: 'Skills', points: 20 },
+  { field: 'location', label: 'Location', points: 15 },
+  { field: 'workMode', label: 'Work mode', points: 10 },
+  { field: 'yearsExperience', label: 'Years of experience', points: 10 },
+  { field: 'linkedinUrl', label: 'LinkedIn profile', points: 10 },
+  { field: 'salaryMin', label: 'Salary expectation', points: 5 },
+  { field: 'links', label: 'Portfolio / personal links', points: 5 },
+  { field: 'name', label: 'Name', points: 5 },
+];
+
+/** Minimum-scorable fields per FR-010 — target role + ≥1 skill + location + work mode. */
+const MIN_SCORABLE_FIELDS: ReadonlyArray<keyof StarProfile> = [
+  'targetRole',
+  'skills',
+  'location',
+  'workMode',
+];
+
+/**
+ * Predicate: is the given field "set" on the profile? Strings count when
+ * non-empty after trim, arrays when non-empty, numbers when non-null, and
+ * `workMode` always counts because it has a sensible default ('Remote') —
+ * the user cannot leave it unset.
+ */
+function isProfileFieldSet(profile: StarProfile | null, field: keyof StarProfile): boolean {
+  if (!profile) return false;
+  const value = profile[field];
+  if (field === 'workMode') return typeof value === 'string' && value.length > 0;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'number') return true;
+  return false;
+}
+
+/**
  * Normalised progress snapshot exposed to the UI (EXTR-007 AC2). The raw
  * StarExtractProgressEvent carries phase-specific keys (current/total,
  * imported/skipped, foundOnPage, etc.); this shape flattens the ones a
@@ -67,10 +147,31 @@ interface AppState {
   siteDraft: string;
   dismissed: string[];
   onbStep: number;
-  // Profile / preferences
+  // Profile / preferences (CVPROF-005)
+  /** Persisted Profile mirrored from main via `profile:get` / `profile:save`. */
+  profile: StarProfile | null;
+  profileLoaded: boolean;
+  /**
+   * Top-level mirror of `profile.workMode` retained so the existing
+   * ProfilePage binding (`store.workMode = m`) continues to work without
+   * modifying that page (which lives in a separate ticket's scope). The
+   * persistence-on-edit path is [[setWorkMode]]; direct mutation only
+   * updates renderer state, the same as before CVPROF-005.
+   */
   workMode: 'Remote' | 'Hybrid' | 'On-site';
   backupFolder: string;
   autoBackup: boolean;
+  // CV (CVPROF-005)
+  cvs: StarCv[];
+  currentCv: StarCv | null;
+  cvParseStatus: CvParseStatus;
+  cvParseError: string | null;
+  /**
+   * True when a scoring-relevant Profile field has been edited since the
+   * last (future-epic) re-score. CVPROF-005 only *sets* this flag — the
+   * actual re-score is the scoring epic's job (FR-010 scope boundary).
+   */
+  scoresStale: boolean;
   // Job board (EXTR-007)
   jobs: JobRecord[];
   isExtracting: boolean;
@@ -95,9 +196,16 @@ export const useAppStore = defineStore('app', {
     siteDraft: '',
     dismissed: [],
     onbStep: 1,
+    profile: null,
+    profileLoaded: false,
     workMode: 'Remote',
     backupFolder: '~/Documents/Star Backups',
     autoBackup: true,
+    cvs: [],
+    currentCv: null,
+    cvParseStatus: 'idle',
+    cvParseError: null,
+    scoresStale: false,
     jobs: [],
     isExtracting: false,
     extractProgress: null,
@@ -144,6 +252,46 @@ export const useAppStore = defineStore('app', {
      */
     enabledSites: (state): Site[] => state.sites.filter((s) => s.enabled),
     onbProgress: (state): number => (state.onbStep / 4) * 100,
+    /**
+     * Per-field strength rubric (CVPROF-005 AC4 / FR-009). Exposed verbatim
+     * so the Profile screen can render "what raises your strength" beside
+     * the bar. Each entry carries the field, label, point allocation, the
+     * scoring-relevance flag, and whether the current profile satisfies it.
+     */
+    strengthRubric: (state): StrengthRubricItem[] =>
+      STRENGTH_RUBRIC.map((row) => ({
+        field: row.field,
+        label: row.label,
+        points: row.points,
+        scoringRelevant: SCORING_RELEVANT_FIELDS.has(row.field),
+        achieved: isProfileFieldSet(state.profile, row.field),
+      })),
+    /**
+     * Profile strength as a 0-100 integer (FR-009). Returns 0 until the
+     * profile has been persisted at least once (`updatedAt > 0`) so a fresh
+     * install doesn't display points for default fields the user has not
+     * confirmed.
+     */
+    profileStrength(): number {
+      const profile = this.profile;
+      if (!profile || profile.updatedAt === 0) return 0;
+      let total = 0;
+      for (const item of this.strengthRubric) {
+        if (item.achieved) total += item.points;
+      }
+      return total;
+    },
+    /**
+     * Names of the minimum-scorable fields (target role + ≥1 skill +
+     * location + work mode per FR-010) that are not yet set. Empty array
+     * means the profile clears the gate.
+     */
+    missingScoringFields: (state): Array<keyof StarProfile> =>
+      MIN_SCORABLE_FIELDS.filter((f) => !isProfileFieldSet(state.profile, f)),
+    /** True when the profile clears the minimum-scorable gate (FR-010). */
+    isScorable(): boolean {
+      return this.missingScoringFields.length === 0;
+    },
   },
 
   actions: {
@@ -459,6 +607,119 @@ export const useAppStore = defineStore('app', {
     },
     onbReset() {
       this.onbStep = 1;
+    },
+    /**
+     * Pull the persisted Profile singleton from main via `profile:get`
+     * (CVPROF-005 AC1). Syncs the top-level `workMode` mirror so the
+     * existing ProfilePage binding stays consistent with the persisted
+     * value across a restart. No-ops when the preload bridge is absent.
+     */
+    async loadProfile() {
+      const bridge = typeof window !== 'undefined' ? window.starProfile : undefined;
+      if (!bridge) return;
+      const profile = await bridge.get();
+      this.profile = profile;
+      this.workMode = profile.workMode;
+      this.profileLoaded = true;
+    },
+    /**
+     * Persist a partial Profile edit via `profile:save` (CVPROF-005 AC1).
+     * The patch is forwarded verbatim — main merges, bumps `updatedAt`, and
+     * returns the new row. If any scoring-relevant field changed, the
+     * `scoresStale` flag is set (FR-010 AC5); CVPROF-005 only marks stale,
+     * the re-score itself belongs to the scoring epic.
+     */
+    async saveProfile(patch: Partial<Omit<StarProfile, 'updatedAt'>>) {
+      const bridge = typeof window !== 'undefined' ? window.starProfile : undefined;
+      if (!bridge) return;
+      const next = await bridge.save(patch);
+      this.profile = next;
+      this.workMode = next.workMode;
+      for (const key of Object.keys(patch) as Array<keyof StarProfile>) {
+        if (SCORING_RELEVANT_FIELDS.has(key)) {
+          this.scoresStale = true;
+          break;
+        }
+      }
+    },
+    /**
+     * Convenience setter for the work-mode toggle on the Profile screen.
+     * Mirrors the legacy `store.workMode = m` binding pattern but routes
+     * through [[saveProfile]] so the change persists and the staleness
+     * flag is flipped (AC5).
+     */
+    async setWorkMode(mode: 'Remote' | 'Hybrid' | 'On-site') {
+      await this.saveProfile({ workMode: mode });
+    },
+    /**
+     * Fetch every persisted CV version via `cv:list` (CVPROF-005 AC2).
+     * Sets `cvs` to the full history and pins `currentCv` to the highest
+     * version (most recent upload) so the Profile card can render "latest
+     * CV" without re-sorting.
+     */
+    async listCvs() {
+      const bridge = typeof window !== 'undefined' ? window.starCv : undefined;
+      if (!bridge) return;
+      const rows = await bridge.list();
+      this.cvs = rows;
+      this.currentCv = rows.length
+        ? [...rows].sort((a, b) => b.version - a.version)[0] ?? null
+        : null;
+    },
+    /**
+     * Upload a new CV via `cv:upload` (CVPROF-005 AC2 / FR-006). Re-uploads
+     * always create a new version row — main never overwrites in place — so
+     * this is also the "Replace" path; [[replaceCv]] is an alias for clarity
+     * on the Profile screen.
+     */
+    async uploadCv(input: StarCvUploadInput): Promise<StarCv | null> {
+      const bridge = typeof window !== 'undefined' ? window.starCv : undefined;
+      if (!bridge) return null;
+      this.cvParseStatus = 'extracting';
+      this.cvParseError = null;
+      const cv = await bridge.upload(input);
+      this.cvs.push(cv);
+      this.currentCv = cv;
+      return cv;
+    },
+    /**
+     * Alias of [[uploadCv]] for the "Replace" affordance on the Profile
+     * screen — calling out the versioned-replace semantics in the call
+     * site without duplicating the underlying flow (FR-006).
+     */
+    async replaceCv(input: StarCvUploadInput): Promise<StarCv | null> {
+      return this.uploadCv(input);
+    },
+    /**
+     * Fetch a specific CV version by id via `cv:get`. Returns null when
+     * the bridge is absent or the row doesn't exist; the caller decides
+     * whether that's an error or a soft miss.
+     */
+    async getCv(id: string): Promise<StarCv | null> {
+      const bridge = typeof window !== 'undefined' ? window.starCv : undefined;
+      if (!bridge) return null;
+      return bridge.get(id);
+    },
+    /**
+     * Structure raw CV text into Profile fields via `cv:structure` — the
+     * first OpenRouter completion call (CVPROF-004). Updates `cvParseStatus`
+     * (`structuring` → `ready` / `error`) and surfaces the failure message
+     * on `cvParseError` so the review step can show a stable code-driven
+     * message (no-key, rate-limited, etc.) without parsing exception text.
+     */
+    async structureCv(text: string): Promise<StarCvStructureResult | null> {
+      const bridge = typeof window !== 'undefined' ? window.starCvStructurer : undefined;
+      if (!bridge) return null;
+      this.cvParseStatus = 'structuring';
+      this.cvParseError = null;
+      const result = await bridge.structure(text);
+      if (result.ok) {
+        this.cvParseStatus = 'ready';
+      } else {
+        this.cvParseStatus = 'error';
+        this.cvParseError = result.message;
+      }
+      return result;
     },
   },
 });
