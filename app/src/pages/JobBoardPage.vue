@@ -34,7 +34,10 @@
         <hr class="hair" />
 
         <footer class="tile__actions">
-          <q-btn unelevated color="primary" no-caps class="col-grow" label="Open" @click="store.openJob(j.url)" />
+          <q-btn unelevated color="primary" no-caps class="col-grow" label="Detail" @click="openDetail(j)" />
+          <q-btn outline no-caps class="col-grow score-btn" label="Score" disable>
+            <q-tooltip>Scoring is not yet available</q-tooltip>
+          </q-btn>
           <button
             type="button"
             class="star"
@@ -55,15 +58,26 @@
         </footer>
       </article>
     </div>
+
+    <JobDetailDialog v-if="selectedJob" v-model="detailOpen" :job="selectedJob" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
+import JobDetailDialog from 'src/components/JobDetailDialog.vue';
 import type { JobRecord } from 'src/types/models';
 
 const store = useAppStore();
+
+const detailOpen = ref(false);
+const selectedJob = ref<JobRecord | null>(null);
+
+function openDetail(j: JobRecord) {
+  selectedJob.value = j;
+  detailOpen.value = true;
+}
 
 function initial(j: JobRecord): string {
   const src = j.company || j.title || j.hostname || '?';
