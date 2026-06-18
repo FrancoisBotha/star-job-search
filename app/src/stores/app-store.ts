@@ -13,6 +13,42 @@ import type {
 
 export type { MatchFactor, MatchScore };
 
+/**
+ * Renderer-side mirror of the persisted AI Match Review (AIREV-001 /
+ * AIREV-002 / Epic 6 §7) — narrative ONLY (no number/score field by
+ * construction). Re-export of the ambient [[StarMatchReview]] shape so
+ * callers can import it from a single module alongside the store.
+ */
+export type MatchReview = StarMatchReview;
+
+/**
+ * Per-job generate state for the AI Match Review (AIREV-004 / Epic 6 §8).
+ * `idle` is the resting state; `loading` while the structured-output call
+ * is in flight; `error` carries the stable [[StarReviewErrorCode]]
+ * (NO_API_KEY / NO_DEFAULT_MODEL / NO_CV / JOB_NOT_FOUND /
+ * MODEL_NOT_CAPABLE / LLM_ERROR / SCHEMA_ERROR) so the UI can render the
+ * matching message without parsing exception text (FR-006 / NFR-004).
+ */
+export interface MatchReviewGenerateState {
+  status: 'idle' | 'loading' | 'error';
+  code: StarReviewErrorCode | null;
+  message: string | null;
+}
+
+/**
+ * localStorage key for the Epic 4 "what is sent" disclosure acknowledgement.
+ * The AI Match Review (Epic 6 / AIREV-004) reuses the same flag so the first
+ * send of JD + CV text to the model is gated behind the same one-time
+ * disclosure the CV review uses (FR-005 — no new disclosure copy).
+ */
+const REVIEW_DISCLOSURE_KEY = 'star.cvDisclosure.ack.v1';
+
+const IDLE_REVIEW_STATE: MatchReviewGenerateState = {
+  status: 'idle',
+  code: null,
+  message: null,
+};
+
 /** ★4+ threshold for the strong-match selector (Epic 5 §3, AC §10). */
 const STRONG_MATCH_STAR_THRESHOLD = 4;
 
@@ -214,6 +250,28 @@ interface AppState {
   isScoring: boolean;
   /** Latest `scores:progress` snapshot — drives the rescore progress UI. */
   scoreProgress: ScoreProgressSnapshot | null;
+  /**
+   * Persisted MatchReview rows keyed by `sourceId` (AIREV-004 / Epic 6 §8).
+   * Narrative only — by hard boundary (Epic 6) no score/star/percent appears
+   * in this map. Hydrated lazily via [[getReview]] and refreshed on
+   * [[generateReview]] success.
+   */
+  reviews: Record<string, MatchReview>;
+  /**
+   * Per-job generate state keyed by `sourceId`. Tracks
+   * idle / loading / error (with the stable error code) so the Job-detail
+   * modal can render specific messages for NO_API_KEY, MODEL_NOT_CAPABLE,
+   * LLM_ERROR, etc. (FR-006 / NFR-004).
+   */
+  reviewStates: Record<string, MatchReviewGenerateState>;
+  /**
+   * Renderer mirror of the Epic 4 disclosure acknowledgement (AIREV-004 /
+   * FR-005). True once the user has acknowledged "what is sent" — the
+   * AI Match Review reuses the same one-time flag so the first JD + CV
+   * send is gated. Synced from / written to `localStorage` via
+   * [[hydrateReviewDisclosure]] / [[acknowledgeReviewDisclosure]].
+   */
+  reviewDisclosureAcknowledged: boolean;
 }
 
 export const useAppStore = defineStore('app', {
@@ -250,6 +308,9 @@ export const useAppStore = defineStore('app', {
     scores: {},
     isScoring: false,
     scoreProgress: null,
+    reviews: {},
+    reviewStates: {},
+    reviewDisclosureAcknowledged: false,
   }),
 
   getters: {
@@ -356,6 +417,43 @@ export const useAppStore = defineStore('app', {
       const scored = (j: JobRecord) => state.scores[j.sourceId]?.percent ?? -1;
       return [...state.jobs].sort((a, b) => scored(b) - scored(a));
     },
+    /**
+     * True iff a cached AI Match Review exists for the given job
+     * (AIREV-004 AC2). Drives the "Generate review" vs "Show review" toggle
+     * in the Job-detail modal.
+     */
+    hasReview: (state) => (sourceId: string): boolean =>
+      Boolean(state.reviews[sourceId]),
+    /**
+     * Provenance ("AI review · {model} · {date}") for the cached review
+     * (AIREV-004 AC2 / Epic 6 §6). Returns `null` when no review is cached
+     * for the given sourceId.
+     */
+    reviewProvenance:
+      (state) =>
+      (sourceId: string): { modelSlug?: string; generatedAt?: number } | null => {
+        const r = state.reviews[sourceId];
+        if (!r) return null;
+        const out: { modelSlug?: string; generatedAt?: number } = {};
+        if (r.modelSlug !== undefined) out.modelSlug = r.modelSlug;
+        if (r.generatedAt !== undefined) out.generatedAt = r.generatedAt;
+        return out;
+      },
+    /**
+     * True when the cached review's `stale` flag is set — drives the
+     * "may be out of date — regenerate" badge (Epic 6 §6 / FR-004).
+     */
+    isReviewStale: (state) => (sourceId: string): boolean =>
+      Boolean(state.reviews[sourceId]?.stale),
+    /**
+     * Per-job generate state lookup (AIREV-004 AC1 / AC3). Always returns a
+     * defined snapshot so the Job-detail modal can render without nullish
+     * guards — defaults to the shared `idle` constant.
+     */
+    reviewGenerateStateFor:
+      (state) =>
+      (sourceId: string): MatchReviewGenerateState =>
+        state.reviewStates[sourceId] ?? IDLE_REVIEW_STATE,
   },
 
   actions: {
@@ -884,6 +982,111 @@ export const useAppStore = defineStore('app', {
       for (const id of Object.keys(this.scores)) {
         const row = this.scores[id];
         if (row) this.scores[id] = { ...row, stale: true };
+      }
+    },
+    /**
+     * Read the Epic 4 "what is sent" disclosure acknowledgement from
+     * `localStorage` (AIREV-004 / FR-005). The AI Match Review reuses the
+     * same one-time flag so the first JD + CV send is gated behind the
+     * existing disclosure — no new copy. Safe in non-browser contexts
+     * (defensive about a missing `window` / `localStorage`).
+     */
+    hydrateReviewDisclosure() {
+      try {
+        const w =
+          typeof window !== 'undefined'
+            ? (window as Window & { localStorage?: Storage })
+            : undefined;
+        const ack = w?.localStorage?.getItem(REVIEW_DISCLOSURE_KEY) === '1';
+        this.reviewDisclosureAcknowledged = ack;
+      } catch {
+        this.reviewDisclosureAcknowledged = false;
+      }
+    },
+    /**
+     * Persist the Epic 4 disclosure acknowledgement (AIREV-004 / FR-005)
+     * and flip the renderer flag. Idempotent — calling it twice is a
+     * no-op. The same key is read by the Onboarding CV review screen so
+     * acknowledging it from the Job-detail modal also satisfies the CV
+     * review's first-send gate.
+     */
+    acknowledgeReviewDisclosure() {
+      this.reviewDisclosureAcknowledged = true;
+      try {
+        const w =
+          typeof window !== 'undefined'
+            ? (window as Window & { localStorage?: Storage })
+            : undefined;
+        w?.localStorage?.setItem(REVIEW_DISCLOSURE_KEY, '1');
+      } catch {
+        /* swallow — disclosure is best-effort persisted */
+      }
+    },
+    /**
+     * Hydrate a single review from main via `review:get` (AIREV-004 AC1).
+     * Inserts the row into `state.reviews` keyed by `sourceId` so the
+     * provenance / stale selectors update without re-fetching. Returns the
+     * persisted review (or null when none exists / the bridge is absent).
+     */
+    async getReview(sourceId: string): Promise<MatchReview | null> {
+      const bridge = typeof window !== 'undefined' ? window.starReview : undefined;
+      if (!bridge) return null;
+      const row = await bridge.get(sourceId);
+      if (row) this.reviews[sourceId] = row;
+      return row;
+    },
+    /**
+     * Generate (or regenerate) the AI Match Review for a job via
+     * `review:generate` (AIREV-004 AC1 / AC3). Manages the per-job state
+     * machine (idle → loading → idle on success / error with code on
+     * failure) and stores the persisted review keyed by `sourceId` on
+     * success.
+     *
+     * **Disclosure gate (FR-005).** The first send of JD + CV text is
+     * gated behind the Epic 4 "what is sent" disclosure — when
+     * [[reviewDisclosureAcknowledged]] is false this action no-ops without
+     * reaching the bridge. Callers (the Job-detail modal) are expected to
+     * present the disclosure and call [[acknowledgeReviewDisclosure]]
+     * before re-trying.
+     */
+    async generateReview(
+      sourceId: string,
+    ): Promise<StarReviewGenerateResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starReview : undefined;
+      if (!bridge) return undefined;
+      if (!this.reviewDisclosureAcknowledged) {
+        this.hydrateReviewDisclosure();
+        if (!this.reviewDisclosureAcknowledged) return undefined;
+      }
+      this.reviewStates[sourceId] = {
+        status: 'loading',
+        code: null,
+        message: null,
+      };
+      try {
+        const result = await bridge.generate(sourceId);
+        if (result.ok) {
+          this.reviews[sourceId] = result.review;
+          this.reviewStates[sourceId] = {
+            status: 'idle',
+            code: null,
+            message: null,
+          };
+        } else {
+          this.reviewStates[sourceId] = {
+            status: 'error',
+            code: result.code,
+            message: result.error,
+          };
+        }
+        return result;
+      } catch (err) {
+        this.reviewStates[sourceId] = {
+          status: 'error',
+          code: 'LLM_ERROR',
+          message: err instanceof Error ? err.message : 'review failed',
+        };
+        return { ok: false, code: 'LLM_ERROR', error: 'review failed' };
       }
     },
     async structureCv(text: string): Promise<StarCvStructureResult | null> {
