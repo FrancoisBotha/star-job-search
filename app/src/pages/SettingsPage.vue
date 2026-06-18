@@ -124,6 +124,15 @@
         <div v-for="site in store.sites" :key="site.id" class="site">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="#bcb6a6" stroke-width="1.4"><circle cx="8" cy="8" r="6" /><line x1="2" y1="8" x2="14" y2="8" /><path d="M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12" /></svg>
           <span class="font-mono site__url">{{ site.host }}</span>
+          <!-- SITEUSR-002 — optional per-site username. Persists on blur /
+               Enter via store.setSiteUsername; an empty string clears it. -->
+          <q-input
+            :model-value="site.username ?? ''"
+            outlined dense
+            class="site__username"
+            placeholder="username (optional)"
+            @update:model-value="(v) => store.setSiteUsername(site.id, String(v ?? '').trim())"
+          />
           <q-toggle
             :model-value="site.enabled"
             color="primary"
@@ -328,6 +337,7 @@ const showAbout = ref(false);
 
 .site { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--hair-light); }
 .site__url { flex: 1; font-size: 13.5px; color: #3a3530; }
+.site__username { width: 180px; }
 .site__toggle { font-size: 11px; color: var(--text-3); }
 .site__remove { color: var(--muted); border-color: var(--hair); }
 .site-add { display: flex; align-items: center; gap: 9px; padding: 13px 16px; }
