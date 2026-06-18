@@ -83,12 +83,24 @@
       </div>
 
       <!-- How the star score works -->
-      <h2 class="section-title sec">How the star score works</h2>
+      <h2 class="section-title sec">How the match score works</h2>
       <p class="lead">
-        Every job is scored from one to five stars by comparing the posting against your CV and
-        preferences — skills, seniority, location, and salary. Four stars and up are surfaced as
-        strong matches; the breakdown for each is on the job's detail screen.
+        Every job on your board gets a <strong>1 to 5 star</strong> match and a
+        <strong>0 to 100% match</strong> by comparing the posting against your Profile across
+        four factors — skills, experience, location and salary. The percentage drives the stars,
+        so the two never disagree. Scoring is <strong>local, deterministic and fully offline</strong>:
+        the same job + Profile + weights always yield the same result, and it works with
+        <strong>no AI key and no network</strong> — Star never calls OpenRouter to score.
       </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in scoringSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
 
       <!-- FAQ -->
       <h2 class="section-title sec">Frequently asked</h2>
@@ -226,6 +238,33 @@ const extractSteps = [
   {
     title: 'Triage on Starred matches',
     body: 'Open Starred matches to see what was imported. Open sends the posting back into the embedded browser; Not interested hides it; Restore N hidden brings hidden roles back when you change your mind.',
+  },
+];
+
+const scoringSteps = [
+  {
+    title: 'The four factors',
+    body: 'Star compares the listing against your Profile across four factors — Skills (coverage of your skills against the title + description, with a small alias map so things like "k8s" still match "Kubernetes"), Experience (your years of experience versus what the listing asks for), Location (your location and work mode — Remote, Hybrid or On-site — versus the listing\'s location and workplace type), and Salary (the listing\'s stated range versus your minimum + currency).',
+  },
+  {
+    title: 'How to read the breakdown',
+    body: 'Open any job to see the per-factor breakdown on the job-detail screen. Each factor shows a bar, a sub-score and a one-line rationale — the matched skills, the gap, or the compared values — so you can see exactly why the global percentage came out where it did. The included factors are weighted and the weighted average equals the percentage at the top; nothing is hidden.',
+  },
+  {
+    title: 'Excluded factors are labelled, not zeroed',
+    body: 'When a factor can\'t be evaluated — for example, a listing with no stated salary, or a Profile with no salary target — Star marks the factor "excluded" rather than scoring it zero. The remaining factors re-normalise so an absent signal never drags the score down; the breakdown shows the excluded label so you know the score reflects only what was actually compared.',
+  },
+  {
+    title: 'Dashboard STRONG count and top matches',
+    body: 'The Dashboard surfaces the score in two places: the stat strip\'s STRONG number counts your ★4-and-up strong matches, and Top matches today lists the highest-scoring jobs so the strongest ones are one click away.',
+  },
+  {
+    title: 'Re-scoring stale jobs after a Profile edit',
+    body: 'Scoring-relevant Profile fields — target role, skills, years of experience, location, work mode, minimum salary — mark existing scores stale the moment you edit them. The Profile screen calls out the stale count and offers a Re-score action that runs the scorer over the affected jobs off the UI thread, so the breakdown reflects the Profile you have now.',
+  },
+  {
+    title: 'Why scores stay stable when OpenRouter is down',
+    body: 'Scoring is deterministic and lives entirely in the app — it makes no model call. Even with no OpenRouter key configured and no internet connection, every job on your board still gets a star rating and a percentage match, and the same inputs always produce the same answer.',
   },
 ];
 
