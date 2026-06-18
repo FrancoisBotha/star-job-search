@@ -19,6 +19,15 @@ import { startMcpBrowserServer, type RunningMcpBrowserServer } from './mcp-brows
 import { createJobsStore } from './jobs';
 import { buildDefaultExtractor, registerExtractionIpc } from './extraction';
 import { registerShellIpc } from './shell';
+import { createMatchScoresStore } from './matchScores';
+import {
+  createScoringRunner,
+  isScoringRelevantProfileChange,
+  registerScoringIpc,
+  SCORES_PROGRESS_CHANNEL,
+  type ScoringProgressEvent,
+} from './scoring';
+import type { ProfileInput, ProfileStore } from './profile';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -101,9 +110,32 @@ function createWindow() {
   const sitesDb = openSitesDatabase(path.join(app.getPath('userData'), 'star.db'));
   registerSitesIpc(ipcMain, createSitesStore(sitesDb));
 
+  // Wire the persisted match-scores store (SCORE-003). Reuses the shared
+  // star.db handle so scores survive an app restart alongside the jobs and
+  // profile rows. The store creates its own `match_scores` table on first run.
+  const matchScoresStore = createMatchScoresStore(sitesDb);
+
   // Wire the singleton Profile store + IPC (CVPROF-001). Reuses the shared
   // star.db handle; the store creates its own `profile` table on first run.
-  registerProfileIpc(ipcMain, createProfileStore(sitesDb));
+  //
+  // SCORE-004 / FR-006: wrap the store so a save to a scoring-relevant field
+  // flips affected MatchScore rows `stale` (the Epic 4 hook). Non-scoring
+  // edits leave the prior scores untouched. The wrapper preserves the
+  // ProfileStore contract so registerProfileIpc is unaware of the hook.
+  const profileStore = createProfileStore(sitesDb);
+  const profileStoreWithStaleHook: ProfileStore = {
+    get: () => profileStore.get(),
+    save: (input: ProfileInput) => {
+      const prev = profileStore.get();
+      const next = profileStore.save(input);
+      if (isScoringRelevantProfileChange(prev, next)) {
+        const ids = matchScoresStore.list().map((s) => s.sourceId);
+        if (ids.length > 0) matchScoresStore.markStale(ids);
+      }
+      return next;
+    },
+  };
+  registerProfileIpc(ipcMain, profileStoreWithStaleHook);
 
   // Wire the versioned CV store + IPC (CVPROF-003). Binaries live under
   // <userData>/cv/<profileId>/ as portable relative paths; metadata and
@@ -164,6 +196,28 @@ function createWindow() {
   // calls to the crawler for the duration of the run.
   const jobsStore = createJobsStore(sitesDb);
   const preferredModelsForExtraction = createPreferredModelsStore(sitesDb);
+
+  // Wire the scoring runtime (SCORE-004). The runner pulls the freshest
+  // Profile per batch via profileStore.get() so a CV upload / profile edit
+  // takes effect on the next run. Progress streams to the renderer over the
+  // shared `scores:progress` channel — the preload bridge subscribes to it.
+  // Scoring is local-only: no API key, no model, no network reach this code
+  // path (FR-008, NFR-002).
+  const emitScoresProgress = (event: ScoringProgressEvent) => {
+    mainWindow?.webContents.send(SCORES_PROGRESS_CHANNEL, event);
+  };
+  const scoringRunner = createScoringRunner({
+    scoresStore: matchScoresStore,
+    jobsStore,
+    getProfile: () => profileStore.get(),
+    emitProgress: emitScoresProgress,
+  });
+  registerScoringIpc(ipcMain, {
+    scoresStore: matchScoresStore,
+    jobsStore,
+    getProfile: () => profileStore.get(),
+    emitProgress: emitScoresProgress,
+  });
   const preloadPath = path.resolve(
     currentDir,
     path.join(
@@ -218,6 +272,14 @@ function createWindow() {
       }),
     emitProgress: (e) => {
       mainWindow?.webContents.send('extract:progress', e);
+      // SCORE-004 / FR-006: when an extraction run completes, score the
+      // jobs that don't have a MatchScore row yet. Fire-and-forget — the
+      // scoring runner reports its own progress over `scores:progress`.
+      if (e && (e as { phase?: string }).phase === 'done') {
+        void scoringRunner.scoreNewJobs().catch(() => {
+          // Best-effort: a scoring failure must never abort the extract.
+        });
+      }
     },
   });
 

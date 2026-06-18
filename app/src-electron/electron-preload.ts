@@ -141,6 +141,34 @@ contextBridge.exposeInMainWorld('starBoard', {
   open: (url: string) => ipcRenderer.invoke('view:open', url),
 });
 
+// Scoring bridge (SCORE-004 / Epic 5). `get`/`list` read the persisted
+// MatchScore rows produced by the deterministic scorer; `rescore` kicks off
+// a batch over stale + unscored jobs (default), every job (mode: 'all'),
+// only-unscored jobs (mode: 'unscored'), or one job (sourceId). Progress
+// streams via `scores:progress` — { phase, total, completed, sourceId }.
+interface ScoresRescoreInput {
+  mode?: 'stale' | 'unscored' | 'all';
+  sourceId?: string;
+}
+
+interface ScoresProgressEvent {
+  phase: string;
+  total: number;
+  completed: number;
+  sourceId?: string;
+}
+
+contextBridge.exposeInMainWorld('starScores', {
+  get: (sourceId: string) => ipcRenderer.invoke('scores:get', sourceId),
+  list: () => ipcRenderer.invoke('scores:list'),
+  rescore: (input?: ScoresRescoreInput) => ipcRenderer.invoke('scores:rescore', input ?? {}),
+  onProgress: (cb: (event: ScoresProgressEvent) => void) => {
+    const listener = (_event: unknown, evt: ScoresProgressEvent) => cb(evt);
+    ipcRenderer.on('scores:progress', listener);
+    return () => ipcRenderer.removeListener('scores:progress', listener);
+  },
+});
+
 // External shell bridge (JOBDET-001). Opens http/https URLs in the user's OS
 // default browser. Distinct from `starBoard.open` (which navigates the
 // embedded Discover browser via `view:open`). The main-process handler

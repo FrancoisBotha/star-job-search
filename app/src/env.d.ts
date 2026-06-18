@@ -274,6 +274,64 @@ interface StarShellApi {
   openExternal: (url: string) => Promise<StarShellOpenExternalResult>;
 }
 
+/** The four scoring factor keys (Epic 5 §7). */
+type StarMatchFactorKey = 'skills' | 'experience' | 'location' | 'salary';
+
+/** Renderer-side mirror of the main-process `MatchFactor` shape (Epic 5 §7). */
+interface StarMatchFactor {
+  key: StarMatchFactorKey;
+  /** False when the factor cannot be evaluated (e.g. listing states no salary). */
+  included: boolean;
+  /** 0-100 sub-score. Meaningless when `included === false`. */
+  score: number;
+  /** Normalised weight applied to this factor; 0 for excluded factors. */
+  weight: number;
+  /** Short, deterministic "why" string for the breakdown UI. */
+  rationale: string;
+}
+
+/** Renderer-side mirror of the main-process `MatchScore` shape (Epic 5 §7). */
+interface StarMatchScore {
+  sourceId: string;
+  stars: number;
+  percent: number;
+  factors: StarMatchFactor[];
+  weightsVersion: string;
+  stale: boolean;
+  scoredAt: number;
+}
+
+/** Input to `scores:rescore`. */
+interface StarScoresRescoreInput {
+  mode?: 'stale' | 'unscored' | 'all';
+  sourceId?: string;
+}
+
+/** Result returned by `scores:rescore`. */
+interface StarScoresRescoreResult {
+  ok: true;
+  scored: number;
+}
+
+/** Progress event streamed via `scores:progress` (SCORE-004). */
+interface StarScoresProgressEvent {
+  phase: 'start' | 'progress' | 'done' | string;
+  total: number;
+  completed: number;
+  sourceId?: string;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the deterministic
+ *  scorer (SCORE-004 / Epic 5). Scoring is fully local — no network / model
+ *  / API-key dependency reaches this surface. */
+interface StarScoresApi {
+  get: (sourceId: string) => Promise<StarMatchScore | null>;
+  list: () => Promise<StarMatchScore[]>;
+  rescore: (input?: StarScoresRescoreInput) => Promise<StarScoresRescoreResult>;
+  /** Subscribe to `scores:progress`. Returns an unsubscribe function. */
+  onProgress: (cb: (event: StarScoresProgressEvent) => void) => () => void;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
@@ -287,4 +345,5 @@ interface Window {
   starExtract?: StarExtractApi;
   starBoard?: StarBoardApi;
   starShell?: StarShellApi;
+  starScores?: StarScoresApi;
 }
