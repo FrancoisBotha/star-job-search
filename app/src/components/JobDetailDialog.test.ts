@@ -12,7 +12,10 @@
  *     store.openExternal — markup supports multiple source links (Scenario 3),
  *     rendering a single link when only one source is present.
  *  4. Modal closes via close button, Esc key, and backdrop click (Scenario 2).
- *  5. No score-stars/percentage or per-factor breakdown — detail-only dialog.
+ *
+ * SCORE-007 supersedes the original "detail-only, no score" assertion of
+ * JOBDET-002 — the modal now renders the score breakdown (StarRating +
+ * ScoreBar). Those assertions are covered by JobDetailDialog.score007.test.ts.
  */
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -84,15 +87,5 @@ describe('JobDetailDialog — close behaviour (AC4 / Scenario 2)', () => {
   });
 });
 
-describe('JobDetailDialog — detail-only, no score (AC5)', () => {
-  it('does not render StarRating / score stars or percentage', () => {
-    expect(SRC).not.toMatch(/StarRating/);
-    expect(SRC).not.toMatch(/profile fit/);
-    expect(SRC).not.toMatch(/% fit/);
-  });
-
-  it('does not render a per-factor ScoreBar breakdown', () => {
-    expect(SRC).not.toMatch(/ScoreBar/);
-    expect(SRC).not.toMatch(/Score breakdown/);
-  });
-});
+// JOBDET-002's "detail-only, no score" assertions were superseded by
+// SCORE-007 — see JobDetailDialog.score007.test.ts.
