@@ -64,6 +64,186 @@
         </ul>
       </section>
 
+      <section class="jdd__section jdd__review" aria-labelledby="jdd-review-heading">
+        <header class="jdd__review-head">
+          <h3 id="jdd-review-heading" class="jdd__h3 jdd__review-h3">
+            AI Match Review
+          </h3>
+          <span class="jdd__review-badge" aria-label="AI advisory">AI</span>
+          <span class="jdd__review-advisory">advisory</span>
+        </header>
+        <p class="jdd__review-disclaimer">
+          A qualitative read of this job against your CV &amp; Profile. The
+          deterministic stars above remain the authoritative rating; this AI
+          review never contributes a score.
+        </p>
+
+        <!-- Empty state — no cached review and not loading -->
+        <template v-if="!review && reviewState.status !== 'loading' && reviewState.status !== 'error'">
+          <p class="jdd__review-empty">
+            No review yet for this job.
+          </p>
+          <q-btn
+            no-caps
+            unelevated
+            color="primary"
+            label="Generate review"
+            class="jdd__review-btn"
+            :disable="!canGenerateReview"
+            @click="onGenerateReview"
+          />
+          <p v-if="!canGenerateReview" class="jdd__review-hint">
+            Add an OpenRouter API key and select a default model in Settings,
+            and upload a CV on your Profile, to enable AI Match Review.
+          </p>
+        </template>
+
+        <!-- One-time disclosure (Epic 4 reuse) before the first send -->
+        <div v-if="showReviewDisclosure" class="jdd__review-disclosure" role="dialog" aria-label="What is sent">
+          <h4 class="jdd__review-disclosure-h4">What is sent</h4>
+          <p>
+            Your CV text and this job's description are sent to your selected
+            OpenRouter model to produce the review. No other data leaves your
+            machine.
+          </p>
+          <div class="jdd__review-disclosure-actions">
+            <q-btn
+              no-caps
+              flat
+              dense
+              label="Cancel"
+              @click="showReviewDisclosure = false"
+            />
+            <q-btn
+              no-caps
+              unelevated
+              color="primary"
+              label="Acknowledge &amp; generate"
+              @click="onAcknowledgeAndGenerate"
+            />
+          </div>
+        </div>
+
+        <!-- Loading state -->
+        <div v-if="reviewState.status === 'loading'" class="jdd__review-loading">
+          <q-spinner color="primary" size="20px" />
+          <span>Generating review&hellip;</span>
+        </div>
+
+        <!-- Per-code error states -->
+        <div
+          v-if="reviewState.status === 'error' && reviewState.code"
+          class="jdd__review-error"
+          role="alert"
+        >
+          <p class="jdd__review-error-msg">{{ reviewErrorMessage }}</p>
+          <p class="jdd__review-error-code">
+            <span class="font-mono">{{ reviewState.code }}</span>
+          </p>
+          <q-btn
+            no-caps
+            outline
+            color="primary"
+            label="Try again"
+            @click="onGenerateReview"
+          />
+        </div>
+
+        <!-- Generated narrative -->
+        <template v-if="review">
+          <p class="jdd__review-provenance font-mono">
+            AI review · {{ review.modelSlug || 'unknown model' }} ·
+            {{ formatReviewDate(review.generatedAt) }}
+          </p>
+
+          <p v-if="review.stale" class="jdd__review-stale">
+            may be out of date — regenerate
+          </p>
+
+          <div class="jdd__review-actions">
+            <q-btn
+              no-caps
+              outline
+              dense
+              color="primary"
+              label="Regenerate"
+              :disable="reviewState.status === 'loading'"
+              @click="onGenerateReview"
+            />
+          </div>
+
+          <p class="jdd__review-summary">{{ review.summary }}</p>
+
+          <h4 class="jdd__review-h4">Requirements</h4>
+          <ul class="jdd__review-list">
+            <li
+              v-for="(req, ri) in review.requirements"
+              :key="`req-${ri}`"
+              class="jdd__review-item"
+            >
+              <div class="jdd__review-row">
+                <span class="jdd__review-req">{{ req.requirement }}</span>
+                <span
+                  v-if="req.met"
+                  class="jdd__review-met"
+                  aria-label="met"
+                >met</span>
+                <span
+                  v-else
+                  class="jdd__review-notfound"
+                  aria-label="not found"
+                >not found</span>
+              </div>
+              <p
+                v-if="req.evidence"
+                class="jdd__review-evidence"
+              >Evidence: {{ req.evidence }}</p>
+            </li>
+          </ul>
+
+          <h4 v-if="review.gaps.length" class="jdd__review-h4">Gaps</h4>
+          <ul v-if="review.gaps.length" class="jdd__review-list">
+            <li
+              v-for="(gap, gi) in review.gaps"
+              :key="`gap-${gi}`"
+              class="jdd__review-item"
+            >
+              <div class="jdd__review-row">
+                <span class="jdd__review-gap-text">{{ gap.text }}</span>
+                <span
+                  v-if="gap.severity === 'blocker'"
+                  class="jdd__review-blocker"
+                  aria-label="blocker"
+                >blocker</span>
+                <span
+                  v-else
+                  class="jdd__review-nice"
+                  aria-label="nice to have"
+                >nice-to-have</span>
+              </div>
+              <p class="jdd__review-mitigation">Mitigation: {{ gap.mitigation }}</p>
+            </li>
+          </ul>
+
+          <h4 v-if="review.strengths.length" class="jdd__review-h4">Strengths</h4>
+          <ul v-if="review.strengths.length" class="jdd__review-bullets">
+            <li
+              v-for="(s, si) in review.strengths"
+              :key="`str-${si}`"
+            >{{ s }}</li>
+          </ul>
+
+          <h4 v-if="review.keywords.length" class="jdd__review-h4">Keywords to mirror</h4>
+          <ul v-if="review.keywords.length" class="jdd__review-keywords">
+            <li
+              v-for="(k, ki) in review.keywords"
+              :key="`kw-${ki}`"
+              class="jdd__review-kw font-mono"
+            >{{ k }}</li>
+          </ul>
+        </template>
+      </section>
+
       <section class="jdd__section">
         <h3 class="jdd__h3">Description</h3>
         <p class="jdd__desc">{{ job.description || 'No description available.' }}</p>
@@ -86,8 +266,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
+import type { MatchReview, MatchReviewGenerateState } from 'src/stores/app-store';
 import StarRating from 'src/components/StarRating.vue';
 import ScoreBar from 'src/components/ScoreBar.vue';
 import type { FactorKey, JobRecord, MatchScore } from 'src/types/models';
@@ -163,6 +344,133 @@ function factorLabel(key: FactorKey): string {
 function openSource(url: string) {
   void store.openExternal(url);
 }
+
+/**
+ * Cached AI Match Review for this job (AIREV-005 / Epic 6 §6). Narrative
+ * only — by hard boundary the [[MatchReview]] shape carries no score, star,
+ * or percent field. The deterministic Epic 5 score block above remains the
+ * sole authoritative rating in this dialog (NFR-001).
+ */
+const review = computed<MatchReview | null>(
+  () => store.reviews[props.job.sourceId] ?? null,
+);
+
+const IDLE_REVIEW_STATE: MatchReviewGenerateState = {
+  status: 'idle',
+  code: null,
+  message: null,
+};
+
+const reviewState = computed<MatchReviewGenerateState>(
+  () => store.reviewStates[props.job.sourceId] ?? IDLE_REVIEW_STATE,
+);
+
+/**
+ * Local "show the Epic 4 disclosure inline" flag. Flips on when the user
+ * clicks Generate before the one-time "what is sent" acknowledgement has
+ * been recorded (reused from Onboarding's CV review flow / FR-005). Once
+ * acknowledged, [[reviewDisclosureAcknowledged]] persists in localStorage
+ * and the gate is permanently lifted.
+ */
+const showReviewDisclosure = ref(false);
+
+/**
+ * True when the user has the prerequisites to generate a review — saved
+ * OpenRouter API key + a default model selected + an uploaded CV. When any
+ * of these is missing the Generate button is disabled and the hint copy
+ * directs the user to the matching settings (FR-001).
+ */
+const canGenerateReview = computed(() =>
+  Boolean(
+    store.apiKeyStatus.present &&
+    store.preferredModels.some((m) => m.isDefault) &&
+    store.currentCv,
+  ),
+);
+
+const ERROR_MESSAGES: Record<string, string> = {
+  NO_API_KEY:
+    'No OpenRouter API key saved. Add one in Settings to enable AI Match Review.',
+  NO_DEFAULT_MODEL:
+    'No default model selected. Pick a preferred model in Settings.',
+  NO_CV:
+    'No CV on file. Upload a CV on the Profile screen first.',
+  JOB_NOT_FOUND:
+    'This job is no longer available — try re-extracting from the source site.',
+  MODEL_NOT_CAPABLE:
+    'Your selected model does not support structured output. Choose a function-calling–capable model in Settings.',
+  RATE_LIMITED:
+    'Rate-limited by OpenRouter. Wait a moment, then try again.',
+  LLM_ERROR:
+    'The model call failed. Check your connection and try again.',
+  SCHEMA_ERROR:
+    'The model returned an unexpected shape. Try regenerating.',
+};
+
+const reviewErrorMessage = computed(() => {
+  const code = reviewState.value.code;
+  if (!code) return '';
+  // Surface a rate-limit-specific message when the underlying message
+  // string carries the upstream rate-limit signal (LLM_ERROR is the catch-all
+  // code; the message text disambiguates rate-limited from generic failures).
+  const msg = reviewState.value.message || '';
+  if (code === 'LLM_ERROR' && /rate[- ]?limit/i.test(msg)) {
+    return ERROR_MESSAGES.RATE_LIMITED ?? msg;
+  }
+  return ERROR_MESSAGES[code] ?? msg ?? 'Review failed.';
+});
+
+function formatReviewDate(ts: number | undefined): string {
+  if (!ts) return 'unknown date';
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return 'unknown date';
+  }
+}
+
+/**
+ * Click handler for the Generate / Regenerate / Try again controls. Surfaces
+ * the Epic 4 "what is sent" disclosure inline before the first send;
+ * subsequent sends bypass it because [[reviewDisclosureAcknowledged]] is
+ * persisted in localStorage and survives a restart.
+ */
+function onGenerateReview() {
+  if (!store.reviewDisclosureAcknowledged) {
+    store.hydrateReviewDisclosure();
+  }
+  if (!store.reviewDisclosureAcknowledged) {
+    showReviewDisclosure.value = true;
+    return;
+  }
+  void store.generateReview(props.job.sourceId);
+}
+
+function onAcknowledgeAndGenerate() {
+  store.acknowledgeReviewDisclosure();
+  showReviewDisclosure.value = false;
+  void store.generateReview(props.job.sourceId);
+}
+
+/**
+ * When the dialog opens, lazy-hydrate the cached review (if any) so the
+ * narrative renders immediately on subsequent opens without forcing the user
+ * to regenerate. Also pulls the persisted disclosure ack so the Generate
+ * gate is correct on the very first click.
+ */
+function maybeHydrate() {
+  if (!props.modelValue) return;
+  if (!store.reviewDisclosureAcknowledged) store.hydrateReviewDisclosure();
+  if (!store.reviews[props.job.sourceId]) {
+    void store.getReview(props.job.sourceId);
+  }
+}
+
+onMounted(maybeHydrate);
+watch(
+  () => [props.modelValue, props.job.sourceId] as const,
+  () => maybeHydrate(),
+);
 </script>
 
 <style scoped lang="scss">
@@ -285,6 +593,192 @@ function openSource(url: string) {
     font-size: 12.5px;
     line-height: 1.45;
     color: var(--text-2);
+  }
+
+  &__review {
+    border: 1px dashed var(--muted);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: var(--card);
+  }
+  &__review-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  &__review-h3 { margin: 0; }
+  &__review-badge {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font: 700 10px/1 var(--font-mono);
+    letter-spacing: 0.06em;
+    padding: 4px 6px;
+    border-radius: 4px;
+    text-transform: uppercase;
+  }
+  &__review-advisory {
+    font: 500 11px/1.2 var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+  &__review-disclaimer {
+    margin: 4px 0 12px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-3);
+  }
+  &__review-empty {
+    font-size: 13px;
+    color: var(--text-2);
+    margin: 6px 0 10px;
+  }
+  &__review-btn { margin-top: 4px; }
+  &__review-hint {
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  &__review-disclosure {
+    margin: 10px 0;
+    padding: 12px;
+    border: 1px solid var(--muted);
+    border-radius: 8px;
+    background: var(--olive-tint);
+  }
+  &__review-disclosure-h4 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  &__review-disclosure-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    justify-content: flex-end;
+  }
+  &__review-loading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+  &__review-error {
+    margin: 8px 0;
+    padding: 10px 12px;
+    border: 1px solid #c33;
+    border-radius: 8px;
+    background: #fff5f5;
+    color: #7a1f1f;
+  }
+  &__review-error-msg { margin: 0 0 4px; font-size: 13px; }
+  &__review-error-code {
+    margin: 0 0 8px;
+    font-size: 11px;
+    opacity: 0.75;
+  }
+  &__review-provenance {
+    font-size: 11px;
+    color: var(--muted);
+    margin: 0 0 4px;
+  }
+  &__review-stale {
+    font-size: 12px;
+    color: #8a5a00;
+    background: #fff7e0;
+    border-left: 3px solid #d4a017;
+    padding: 6px 8px;
+    margin: 4px 0 8px;
+  }
+  &__review-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  &__review-summary {
+    margin: 0 0 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    font-style: italic;
+  }
+  &__review-h4 {
+    margin: 12px 0 6px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+  }
+  &__review-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  &__review-item {
+    border-left: 2px solid var(--muted);
+    padding-left: 10px;
+  }
+  &__review-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  &__review-req,
+  &__review-gap-text {
+    font-size: 13px;
+    font-weight: 600;
+    flex: 1;
+    min-width: 0;
+  }
+  &__review-met,
+  &__review-notfound,
+  &__review-blocker,
+  &__review-nice {
+    font: 500 10.5px/1.2 var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 5px;
+    border-radius: 4px;
+  }
+  &__review-met { color: var(--olive-text); background: var(--olive-tint); }
+  &__review-notfound { color: var(--muted); background: transparent; border: 1px solid var(--muted); }
+  &__review-blocker { color: #fff; background: #c33; }
+  &__review-nice { color: var(--muted); background: transparent; border: 1px solid var(--muted); }
+  &__review-evidence,
+  &__review-mitigation {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--text-2);
+  }
+  &__review-bullets {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  &__review-keywords {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  &__review-kw {
+    background: var(--olive-tint);
+    color: var(--olive-text);
+    padding: 3px 7px;
+    border-radius: 4px;
+    font-size: 11.5px;
   }
 
   &__sources { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
