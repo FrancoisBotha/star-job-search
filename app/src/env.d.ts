@@ -336,6 +336,70 @@ interface StarScoresApi {
   onProgress: (cb: (event: StarScoresProgressEvent) => void) => () => void;
 }
 
+/** Gap severity for the AI Match Review (AIREV-001). */
+type StarReviewGapSeverity = 'blocker' | 'nice_to_have';
+
+/** Requirement → evidence row in the AI Match Review (AIREV-001 / Epic 6 §7). */
+interface StarReviewRequirement {
+  requirement: string;
+  /** Null when the CV/Profile does not actually support the requirement
+   *  ("not found" — never invented). */
+  evidence: string | null;
+  met: boolean;
+}
+
+/** Classified gap with concrete mitigation (AIREV-001 / Epic 6 §7). */
+interface StarReviewGap {
+  text: string;
+  severity: StarReviewGapSeverity;
+  mitigation: string;
+}
+
+/**
+ * Renderer-side mirror of the persisted AI Match Review (AIREV-001 /
+ * AIREV-002). Narrative ONLY — by construction there is no number, score,
+ * star rating, or percentage field anywhere in this shape (Epic 6 hard
+ * boundary). The deterministic Epic 5 stars are the only rating in the UI.
+ */
+interface StarMatchReview {
+  sourceId: string;
+  archetype?: string;
+  requirements: StarReviewRequirement[];
+  gaps: StarReviewGap[];
+  strengths: string[];
+  keywords: string[];
+  summary: string;
+  modelSlug?: string;
+  generatedAt?: number;
+  /** True when the cached review may be out of date (CV / Profile changed or
+   *  the job was re-extracted since generation). The narrative is still
+   *  viewable; a regenerate is offered alongside. */
+  stale: boolean;
+}
+
+/** Stable failure codes returned by review:generate (AIREV-003). Mirrors
+ *  `ReviewErrorCode` in src-electron/reviewIpc.ts. */
+type StarReviewErrorCode =
+  | 'NO_API_KEY'
+  | 'NO_DEFAULT_MODEL'
+  | 'NO_CV'
+  | 'JOB_NOT_FOUND'
+  | 'MODEL_NOT_CAPABLE'
+  | 'LLM_ERROR'
+  | 'SCHEMA_ERROR';
+
+type StarReviewGenerateResult =
+  | { ok: true; review: StarMatchReview }
+  | { ok: false; code: StarReviewErrorCode; error: string };
+
+/** Bridge exposed by src-electron/electron-preload.ts for the AI Match
+ *  Review (AIREV-003 / Epic 6 §8). The review is advisory and narrative-only
+ *  — it never reads or writes the deterministic Epic 5 score store. */
+interface StarReviewApi {
+  generate: (sourceId: string) => Promise<StarReviewGenerateResult>;
+  get: (sourceId: string) => Promise<StarMatchReview | null>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
@@ -350,4 +414,5 @@ interface Window {
   starBoard?: StarBoardApi;
   starShell?: StarShellApi;
   starScores?: StarScoresApi;
+  starReview?: StarReviewApi;
 }

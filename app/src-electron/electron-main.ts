@@ -20,6 +20,9 @@ import { createJobsStore } from './jobs';
 import { buildDefaultExtractor, registerExtractionIpc } from './extraction';
 import { registerShellIpc } from './shell';
 import { createMatchScoresStore } from './matchScores';
+import { createMatchReviewsStore } from './matchReviews';
+import { buildMatchReviewLlm } from './matchReview';
+import { markAllReviewsStale, registerReviewIpc } from './reviewIpc';
 import {
   createScoringRunner,
   isScoringRelevantProfileChange,
@@ -115,6 +118,17 @@ function createWindow() {
   // profile rows. The store creates its own `match_scores` table on first run.
   const matchScoresStore = createMatchScoresStore(sitesDb);
 
+  // Wire the persisted match-reviews store (AIREV-002 / Epic 6 §7). Reuses
+  // the shared star.db handle so the AI narrative survives a restart. The
+  // store is STRICTLY separate from match_scores — narrative only, no score
+  // column by construction (Epic 6 hard boundary / NFR-001).
+  const matchReviewsStore = createMatchReviewsStore(sitesDb);
+
+  // Wire the persisted jobs store (EXTR-003). Created here (earlier than its
+  // historical position) so the mark-stale review hooks below have a stable
+  // handle to enumerate known sourceIds with.
+  const jobsStore = createJobsStore(sitesDb);
+
   // Wire the singleton Profile store + IPC (CVPROF-001). Reuses the shared
   // star.db handle; the store creates its own `profile` table on first run.
   //
@@ -132,6 +146,11 @@ function createWindow() {
         const ids = matchScoresStore.list().map((s) => s.sourceId);
         if (ids.length > 0) matchScoresStore.markStale(ids);
       }
+      // AIREV-003 / FR-004: a Profile change can shift the LLM-side review
+      // (skills emphasised, archetype focus, gap mitigation). Flip every
+      // cached review stale so the UI offers a "regenerate" — the narrative
+      // blob is preserved alongside it.
+      markAllReviewsStale(matchReviewsStore, jobsStore);
       return next;
     },
   };
@@ -141,13 +160,24 @@ function createWindow() {
   // <userData>/cv/<profileId>/ as portable relative paths; metadata and
   // extracted text live in the shared star.db. Text extraction is delegated
   // to the CVPROF-002 off-thread extractor so the UI thread is never blocked.
-  registerCvIpc(
-    ipcMain,
-    createCvStore(sitesDb, {
-      storageRoot: app.getPath('userData'),
-      extractor: ({ filePath, mime }) => extractCvText({ filePath, mime }),
-    }),
-  );
+  //
+  // AIREV-003 / FR-004: wrap `upload` so a new CV version flips every cached
+  // AI Match Review stale — the narrative blob is preserved alongside a
+  // "regenerate" affordance.
+  const cvStore = createCvStore(sitesDb, {
+    storageRoot: app.getPath('userData'),
+    extractor: ({ filePath, mime }) => extractCvText({ filePath, mime }),
+  });
+  const cvStoreWithReviewStaleHook: typeof cvStore = {
+    upload: async (input) => {
+      const rec = await cvStore.upload(input);
+      markAllReviewsStale(matchReviewsStore, jobsStore);
+      return rec;
+    },
+    list: (profileId) => cvStore.list(profileId),
+    get: (id) => cvStore.get(id),
+  };
+  registerCvIpc(ipcMain, cvStoreWithReviewStaleHook);
 
   // Wire the preferred-models store + IPC (LLM-003). Shares the star.db
   // handle opened above; the store creates its own `preferred_models` table
@@ -193,8 +223,9 @@ function createWindow() {
   // browser's partitioned session, so cookies / consent state carry over
   // without forcing the user to watch the page being scraped underneath
   // them. The active-target seam from EXTR-001 is used to retarget MCP tool
-  // calls to the crawler for the duration of the run.
-  const jobsStore = createJobsStore(sitesDb);
+  // calls to the crawler for the duration of the run. (`jobsStore` is created
+  // earlier — alongside the match-reviews store — so the mark-stale hooks can
+  // enumerate known sourceIds.)
   const preferredModelsForExtraction = createPreferredModelsStore(sitesDb);
 
   // Wire the scoring runtime (SCORE-004). The runner pulls the freshest
@@ -279,8 +310,36 @@ function createWindow() {
         void scoringRunner.scoreNewJobs().catch(() => {
           // Best-effort: a scoring failure must never abort the extract.
         });
+        // AIREV-003 / FR-004: an extraction run may have re-extracted (or
+        // displaced) job descriptions; flip every cached review stale so the
+        // UI offers a regenerate. Prior narrative blobs are preserved.
+        try {
+          markAllReviewsStale(matchReviewsStore, jobsStore);
+        } catch {
+          // Best-effort: a stale-marking failure must never abort the extract.
+        }
       }
     },
+  });
+
+  // Wire the AI Match Review IPC (AIREV-003 / Epic 6 §8). Reads the Epic 2
+  // key + default model, the JD (Epic 3 jobs), and CV text + Profile
+  // (Epic 4); runs one structured-output call via matchReview.ts; persists
+  // via match_reviews. The review path NEVER reads or writes the Epic 5
+  // match_scores store (NFR-001) and reuses the existing OpenRouter egress
+  // (NFR-002) — no new egress here.
+  registerReviewIpc(ipcMain, {
+    store: matchReviewsStore,
+    jobsStore,
+    cvStore: cvStoreWithReviewStaleHook,
+    getProfile: () => profileStore.get(),
+    getApiKey: () => apiKeyStore.getRawKey(),
+    getDefaultModel: () => {
+      const models = preferredModelsStore.list();
+      const def = models.find((m) => m.isDefault);
+      return def?.slug ?? null;
+    },
+    buildLlm: ({ apiKey, model }) => buildMatchReviewLlm({ apiKey, model }),
   });
 
   // Wire the external-shell IPC (JOBDET-001). Opens http/https URLs in the

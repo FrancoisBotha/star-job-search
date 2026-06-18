@@ -171,6 +171,19 @@ contextBridge.exposeInMainWorld('starScores', {
   },
 });
 
+// AI Match Review bridge (AIREV-003 / Epic 6 §8). `generate` runs the single
+// structured-output review call against OpenRouter (Epic 2 key + default
+// model) over the job's JD + the user's CV/Profile, persists the narrative
+// review via `match_reviews`, and returns it. `get` returns the cached
+// review with its stale flag (or null). Both return a tagged-union result
+// `{ ok: true, review }` or `{ ok: false, code, error }` with a stable error
+// code (NO_API_KEY / NO_DEFAULT_MODEL / NO_CV / JOB_NOT_FOUND /
+// MODEL_NOT_CAPABLE / LLM_ERROR / SCHEMA_ERROR).
+contextBridge.exposeInMainWorld('starReview', {
+  generate: (sourceId: string) => ipcRenderer.invoke('review:generate', sourceId),
+  get: (sourceId: string) => ipcRenderer.invoke('review:get', sourceId),
+});
+
 // External shell bridge (JOBDET-001). Opens http/https URLs in the user's OS
 // default browser. Distinct from `starBoard.open` (which navigates the
 // embedded Discover browser via `view:open`). The main-process handler
