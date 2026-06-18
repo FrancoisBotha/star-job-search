@@ -130,6 +130,54 @@ forks, the two prior egress paths — it never opens a new one.
   saved key and a chosen default model. The LLM Gateway from Epic 2 is the only
   caller; the extraction subsystem never opens a third egress path.
 
+## 3b. CV → Profile Flow (Epic 4)
+
+Epic 4 (Add CV to profile) turns the Profile from a UI shell over `Alex_Morgan_CV.pdf` /
+`PARSED_SKILLS` sample data into the real, persisted source of truth the later scoring
+epic will read. Like §3a, it lives entirely in main and reuses — rather than forks — the
+two existing egress paths.
+
+- **CV upload & on-disk versioning (`cv.ts`).** PDF and DOCX uploads (drag-drop or
+  native picker, max 10MB) are written under `userData`; metadata, extracted text and
+  parsed fields land in `star.db` as a versioned `CV` row keyed to the singleton
+  `Profile`. Re-uploading via Replace creates a new version and re-derives the
+  Profile, so prior data is not silently lost.
+- **Off-thread text extractor.** PDF/DOCX → text runs in a worker / utility process
+  (`pdfjs-dist` for PDF, `mammoth` for DOCX) so the renderer never blocks during
+  upload. The file itself never leaves the device for text extraction (NFR-001).
+- **First real OpenRouter completion call.** Epic 2 built key storage, the model
+  catalogue and default-model selection but stopped short of any chat/completion
+  call. Epic 4 adds the **first** OpenRouter completion / structured-output call on
+  top of that surface: the extracted text is sent to the user's selected default
+  model and returned as a typed `parsedFields` object plus per-field `confidence`
+  scores. The call goes through the existing LLM Gateway — **no new egress path** is
+  opened, and the two-egress boundary in §3 is unchanged.
+- **No-key / parse-failure fallback.** Onboarding lets the user skip the OpenRouter
+  key, so structuring is unavailable on that path; the renderer offers retry, a
+  different file, or manual entry into the same Profile fields. Parse failures
+  degrade the same way (NFR-004).
+- **One-time disclosure.** Before CV text is sent to the model for the first time
+  the renderer surfaces a "what is sent, to which provider" disclosure; structuring
+  proceeds only after acceptance, and is disabled until an Epic 2 key is present.
+- **`profile.ts` singleton.** A single `Profile` row holds target role, skills,
+  years experience, location, work mode, minimum salary + currency, LinkedIn URL
+  and portfolio links. The renderer reads/writes it over `profile:get` /
+  `profile:save` IPC; edits to scoring-relevant fields mark future scores stale
+  (the re-score itself is the scoring epic's job, per §3 and Epic 4 §3).
+- **Profile-strength + minimum-scorable gate (renderer).** Computed deterministically
+  from field completeness; the rubric is exposed in the UI rather than baked into a
+  fixed "85/100". The minimum-scorable set (target role + ≥1 skill + location +
+  work mode) is enforced and the renderer names what is missing.
+
+**Dependencies on earlier epics — load-bearing, not optional:**
+
+- **Epic 2 (OpenRouter LLM integration).** Structuring uses the user's stored key
+  and selected default model. With no key the structuring path is disabled and the
+  renderer falls back to manual entry.
+- **Shared foundation.** Reuses the single `star.db` handle and the preload-bridge
+  pattern from Epics 1–3 (`sites.ts` / `apiKey.ts` as the module template); new
+  bridges `window.starProfile` and `window.starCv` extend the existing surface.
+
 ## 4. Key Decisions
 
 - **Electron, not Tauri/native:** the product *needs* an embedded browser to scan

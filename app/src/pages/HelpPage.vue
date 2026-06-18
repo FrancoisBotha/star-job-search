@@ -48,6 +48,23 @@
         </div>
       </div>
 
+      <!-- CV and Profile -->
+      <h2 class="section-title sec">CV and Profile</h2>
+      <p class="lead">
+        Star scores jobs against your real CV and Profile, so the first thing to do is upload
+        one. Your CV file and the text Star reads out of it stay on this device — only the
+        structuring step talks to OpenRouter, and only after you say yes.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in cvProfileSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Importing jobs with AI Extract -->
       <h2 class="section-title sec">Importing jobs with AI Extract</h2>
       <p class="lead">
@@ -104,7 +121,7 @@
 const steps = [
   {
     title: 'Add your CV & profile',
-    body: 'Upload your CV on the Profile screen so Star can score jobs against your real experience.',
+    body: 'Upload a PDF or DOCX on Onboarding step 1 or the Profile screen. Star reads it on this device, asks OpenRouter to structure the text into Profile fields (only after a one-time "what is sent" disclosure), and shows the result for review — or lets you enter it manually if you skipped the AI key.',
   },
   {
     title: 'Connect an AI provider',
@@ -155,6 +172,41 @@ const providerSteps = [
   {
     title: 'Set a default model',
     body: 'In the preferred-models list, press Set default next to the model Star should reach for first when scoring jobs and drafting CVs and cover letters. Remove drops any model you no longer want.',
+  },
+];
+
+const cvProfileSteps = [
+  {
+    title: 'Upload your CV on Onboarding step 1',
+    body: 'Drag a PDF or DOCX into the dropzone, or use the file picker — other file types are rejected with a clear message and there is a 10MB cap. The file is saved locally and never uploaded for text extraction.',
+  },
+  {
+    title: 'Star reads the file on this device',
+    body: 'Text extraction runs off the UI thread, so the app stays responsive while it works — you will see a progress line during upload, extraction, and structuring. The CV binary and its extracted text live only on this device.',
+  },
+  {
+    title: 'Confirm the "what is sent" disclosure',
+    body: 'The first time Star is about to send CV text to OpenRouter, it shows a one-time disclosure of exactly what is sent and to which provider. Structuring only proceeds once you accept it, and it requires a saved OpenRouter key plus a chosen default model from Settings → LLM integration.',
+  },
+  {
+    title: 'Review the parsed Profile',
+    body: 'On Onboarding step 2, Star shows the structured result — name, contact, target role, skills, employment history, education, years of experience and location. Fields the model was not confident about are flagged for you to confirm or correct; edit anything inline and remove skill chips you don\'t want before continuing.',
+  },
+  {
+    title: 'No key? Enter your profile manually',
+    body: 'If you skipped the OpenRouter key, or parsing fails, or the file is unsupported, Star offers Retry, Upload a different file, or Enter manually — never a dead-end. Manual entry fills the same Profile fields you would otherwise review.',
+  },
+  {
+    title: 'Replace your CV later from the Profile screen',
+    body: 'On the Profile screen, the CV card shows the current file name, when it was uploaded and its parse status. Drag a new file onto the Replace dropzone — Star records a new versioned CV and re-derives the Profile from it, without silently losing earlier data.',
+  },
+  {
+    title: 'Tune your Profile, work mode, salary and links',
+    body: 'The Profile screen is the editable source of truth — target role, skills, years of experience, location, work mode (Remote / Hybrid / On-site), minimum salary and currency, LinkedIn URL and portfolio links. Every edit is saved locally and survives a restart.',
+  },
+  {
+    title: 'Watch the profile-strength rail',
+    body: 'The strength rail reflects real completeness rather than a fixed number — it exposes its rubric so you can see which fields raise it and by how much. The minimum-scorable gate (target role + at least one skill + location + work mode) is called out separately; the UI lists what is still missing before jobs can be scored. Editing any scoring-relevant field marks existing scores stale.',
   },
 ];
 
