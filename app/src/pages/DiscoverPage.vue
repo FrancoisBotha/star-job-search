@@ -30,6 +30,24 @@
             <span class="font-mono">{{ activeUrl || 'No site loaded' }}</span>
             <span class="chrome__tag"><span class="scan-dot" />Star browsing</span>
           </div>
+          <div
+            v-if="activeUsername"
+            class="chrome__username"
+          >
+            <span class="chrome__username-label">User</span>
+            <span class="chrome__username-value font-mono">{{ activeUsername }}</span>
+            <button
+              type="button"
+              class="chrome__username-copy"
+              aria-label="Copy username"
+              @click="onCopyUsername"
+            >
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+                <rect x="5" y="5" width="8" height="8" rx="1.5" />
+                <path d="M3 11V4a1 1 0 0 1 1-1h7" />
+              </svg>
+            </button>
+          </div>
           <button
             type="button"
             class="chrome__extract"
@@ -126,6 +144,37 @@ const progressMessage = computed(() => {
       return p.message ?? '';
   }
 });
+
+/**
+ * Saved username for the currently selected Discover tab (SITEUSR-003).
+ * Derived from `store.sites` so switching tabs (which updates
+ * `selectedSiteId`) reactively re-evaluates and hides the affordance when
+ * the active site has no saved username.
+ */
+const activeSite = computed(() =>
+  store.sites.find((s) => s.id === selectedSiteId.value) ?? null,
+);
+const activeUsername = computed(() => {
+  const u = activeSite.value?.username;
+  return typeof u === 'string' && u.length > 0 ? u : '';
+});
+
+/**
+ * Silent copy of the active tab's saved username to the system clipboard
+ * (SITEUSR-003 AC2). No toast/notification — the spec requires the action
+ * to complete without a confirmation message.
+ */
+async function onCopyUsername() {
+  const value = activeUsername.value;
+  if (!value) return;
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      /* silent — no confirmation message either way */
+    }
+  }
+}
 
 async function onExtract() {
   if (store.isExtracting) return;
@@ -242,6 +291,20 @@ onBeforeUnmount(async () => {
     .font-mono { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   }
   &__tag { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font: 500 11px/1 var(--font-mono); color: var(--accent); }
+  &__username {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 10px;
+    background: #fff; border: 1px solid var(--hair); border-radius: 8px;
+    color: var(--text-2);
+  }
+  &__username-label { font: 500 11px/1 var(--font-mono); color: var(--muted); text-transform: uppercase; }
+  &__username-value { font-size: 12px; color: var(--text-strong); max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  &__username-copy {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; padding: 2px; cursor: pointer;
+    color: var(--faint);
+    &:hover { color: var(--accent); }
+  }
   &__extract {
     display: inline-flex; align-items: center; gap: 6px;
     height: 28px; padding: 0 12px;
