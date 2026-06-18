@@ -53,7 +53,45 @@ export interface Application {
   updated: string;
 }
 
-/** A potential job match surfaced on the Starred page. */
+/** The four scoring factor keys (Epic 5 §7). */
+export type FactorKey = 'skills' | 'experience' | 'location' | 'salary';
+
+/**
+ * Renderer-side mirror of the main-process `MatchFactor` shape (Epic 5 §7).
+ * Each factor carries a 0-100 sub-score, its normalised weight, an
+ * included/excluded flag (false when the factor can't be evaluated, e.g.
+ * the listing states no salary), and a deterministic human-readable
+ * rationale for the breakdown UI.
+ */
+export interface MatchFactor {
+  key: FactorKey;
+  included: boolean;
+  score: number;
+  weight: number;
+  rationale: string;
+}
+
+/**
+ * Renderer-side mirror of the main-process `MatchScore` shape (Epic 5 §7),
+ * keyed by `sourceId` (the job board row's id). The long-promised type
+ * referenced since Epic 1 §7; supersedes the legacy mock [[Match]] type
+ * below for any scored-jobs surface.
+ */
+export interface MatchScore {
+  sourceId: string;
+  stars: number;
+  percent: number;
+  factors: MatchFactor[];
+  weightsVersion: string;
+  stale: boolean;
+  scoredAt: number;
+}
+
+/**
+ * @deprecated Superseded by real scored jobs (`JobRecord` + `MatchScore`)
+ * once Epic 5's scorer is on every consumer. Retained only for the legacy
+ * Starred-page mock-data path until those screens are migrated.
+ */
 export interface Match {
   id: string;
   mono: string;

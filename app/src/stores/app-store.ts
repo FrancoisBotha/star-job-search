@@ -7,7 +7,34 @@ import type {
   JobRecord,
   JobStatus,
   Match,
+  MatchFactor,
+  MatchScore,
 } from 'src/types/models';
+
+export type { MatchFactor, MatchScore };
+
+/** ★4+ threshold for the strong-match selector (Epic 5 §3, AC §10). */
+const STRONG_MATCH_STAR_THRESHOLD = 4;
+
+/**
+ * Normalised progress snapshot for the scoring run (Epic 5 §3). Mirrors
+ * the `scores:progress` event streamed from main — phase ('start' |
+ * 'progress' | 'done'), batch totals, and the current sourceId when a
+ * single job completes mid-batch.
+ */
+export interface ScoreProgressSnapshot {
+  phase: string;
+  total: number;
+  completed: number;
+  sourceId: string | null;
+}
+
+/**
+ * Cleanup handle returned by `window.starScores.onProgress`. Held outside
+ * Pinia state so the function reference is never serialised or made
+ * reactive — same pattern as [[extractProgressUnsubscribe]].
+ */
+let scoresProgressUnsubscribe: (() => void) | null = null;
 
 export type AppFilter = 'All' | AppStatus;
 export type TailorTab = 'cv' | 'letter';
@@ -177,6 +204,16 @@ interface AppState {
   isExtracting: boolean;
   extractProgress: ExtractProgressSnapshot | null;
   extractError: string | null;
+  /**
+   * Persisted MatchScore rows keyed by `sourceId` (Epic 5 §7). Hydrated
+   * via `window.starScores.list` / refreshed per-row via
+   * `window.starScores.get` as scoring progress events arrive.
+   */
+  scores: Record<string, MatchScore>;
+  /** True while a `scores:rescore` batch is in flight. */
+  isScoring: boolean;
+  /** Latest `scores:progress` snapshot — drives the rescore progress UI. */
+  scoreProgress: ScoreProgressSnapshot | null;
 }
 
 export const useAppStore = defineStore('app', {
@@ -210,6 +247,9 @@ export const useAppStore = defineStore('app', {
     isExtracting: false,
     extractProgress: null,
     extractError: null,
+    scores: {},
+    isScoring: false,
+    scoreProgress: null,
   }),
 
   getters: {
@@ -291,6 +331,30 @@ export const useAppStore = defineStore('app', {
     /** True when the profile clears the minimum-scorable gate (FR-010). */
     isScorable(): boolean {
       return this.missingScoringFields.length === 0;
+    },
+    /**
+     * Jobs whose score clears the ★4+ strong-match threshold (Epic 5 §3,
+     * AC §10). Returns the underlying [[JobRecord]]s — augmented with the
+     * matching MatchScore via [[scores]] when a tile needs the percent/
+     * factors — so Board / Starred / Dashboard tiles can render directly.
+     */
+    strongMatches: (state): JobRecord[] =>
+      state.jobs.filter((j) => {
+        const score = state.scores[j.sourceId];
+        return !!score && score.stars >= STRONG_MATCH_STAR_THRESHOLD;
+      }),
+    /** Count of strong matches — drives the Dashboard "STRONG" stat (FR-010). */
+    strongMatchCount(): number {
+      return this.strongMatches.length;
+    },
+    /**
+     * Jobs ordered by their MatchScore percent (descending) — drives the
+     * Dashboard "Top matches today" list and the Job Board's strong-first
+     * ordering (Epic 5 §6, FR-010). Unscored jobs sort last.
+     */
+    topMatches: (state): JobRecord[] => {
+      const scored = (j: JobRecord) => state.scores[j.sourceId]?.percent ?? -1;
+      return [...state.jobs].sort((a, b) => scored(b) - scored(a));
     },
   },
 
@@ -707,6 +771,109 @@ export const useAppStore = defineStore('app', {
      * on `cvParseError` so the review step can show a stable code-driven
      * message (no-key, rate-limited, etc.) without parsing exception text.
      */
+    /**
+     * Hydrate every persisted MatchScore via `scores:list` (SCORE-005 AC1).
+     * Replaces `state.scores` with a fresh map keyed by `sourceId` so the
+     * strong-match selectors reflect what main currently has.
+     */
+    async listScores() {
+      const bridge = typeof window !== 'undefined' ? window.starScores : undefined;
+      if (!bridge) return;
+      const rows = await bridge.list();
+      const next: Record<string, MatchScore> = {};
+      for (const row of rows) next[row.sourceId] = row as MatchScore;
+      this.scores = next;
+    },
+    /**
+     * Refresh a single MatchScore via `scores:get` (SCORE-005 AC1). Inserts
+     * the row into `state.scores` when present so per-row progress events
+     * can keep the cache hot without re-listing every entry. Returns the
+     * MatchScore (or null when none exists for the given sourceId).
+     */
+    async getScore(sourceId: string): Promise<MatchScore | null> {
+      const bridge = typeof window !== 'undefined' ? window.starScores : undefined;
+      if (!bridge) return null;
+      const row = await bridge.get(sourceId);
+      if (row) this.scores[sourceId] = row as MatchScore;
+      return (row as MatchScore | null) ?? null;
+    },
+    /**
+     * Trigger a (re)score batch via `scores:rescore` (SCORE-005 AC4).
+     * Defaults to the "stale + unscored" mode handled by main. Sets
+     * `isScoring` for the duration of the call and clears the
+     * `scoresStale` flag on a successful return so the Profile screen's
+     * "Scores out of date" banner dismisses itself. The `scores:progress`
+     * subscription is the source of truth for per-row updates; this only
+     * reflects the request/response cycle.
+     */
+    async rescore(
+      input?: StarScoresRescoreInput,
+    ): Promise<StarScoresRescoreResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starScores : undefined;
+      if (!bridge) return undefined;
+      this.isScoring = true;
+      try {
+        const result = await bridge.rescore(input);
+        if (result.ok) this.scoresStale = false;
+        return result;
+      } finally {
+        this.isScoring = false;
+      }
+    },
+    /**
+     * Subscribe to `scores:progress` events (SCORE-005 AC5). Mirrors the
+     * progress snapshot on `state.scoreProgress`, flips `isScoring` on
+     * 'start' / off on 'done', and refreshes affected scores reactively:
+     * a `progress` event with a sourceId re-fetches just that row via
+     * [[getScore]]; a `done` event re-lists every score via [[listScores]]
+     * so the strong-match selectors see the final state.
+     */
+    subscribeScoresProgress() {
+      const bridge = typeof window !== 'undefined' ? window.starScores : undefined;
+      if (!bridge) return;
+      if (scoresProgressUnsubscribe) {
+        scoresProgressUnsubscribe();
+        scoresProgressUnsubscribe = null;
+      }
+      scoresProgressUnsubscribe = bridge.onProgress((event) => {
+        const phase = String(event.phase ?? '');
+        this.scoreProgress = {
+          phase,
+          total: typeof event.total === 'number' ? event.total : 0,
+          completed: typeof event.completed === 'number' ? event.completed : 0,
+          sourceId: typeof event.sourceId === 'string' ? event.sourceId : null,
+        };
+        if (phase === 'done') {
+          this.isScoring = false;
+          void this.listScores().catch(() => {});
+        } else if (phase === 'start' || phase === 'progress') {
+          this.isScoring = true;
+          if (phase === 'progress' && typeof event.sourceId === 'string') {
+            void this.getScore(event.sourceId).catch(() => {});
+          }
+        }
+      });
+    },
+    /** Tear down the progress subscription created by [[subscribeScoresProgress]]. */
+    unsubscribeScoresProgress() {
+      if (scoresProgressUnsubscribe) {
+        scoresProgressUnsubscribe();
+        scoresProgressUnsubscribe = null;
+      }
+    },
+    /**
+     * Mark every cached score stale (SCORE-005 AC5). Used by the Epic 4
+     * profile-change hook: when a scoring-relevant field is edited, the
+     * top-level flag flips *and* each row's `stale` flag flips so a tile
+     * can show a "stale" badge before the user triggers a re-score.
+     */
+    markScoresStale() {
+      this.scoresStale = true;
+      for (const id of Object.keys(this.scores)) {
+        const row = this.scores[id];
+        if (row) this.scores[id] = { ...row, stale: true };
+      }
+    },
     async structureCv(text: string): Promise<StarCvStructureResult | null> {
       const bridge = typeof window !== 'undefined' ? window.starCvStructurer : undefined;
       if (!bridge) return null;
