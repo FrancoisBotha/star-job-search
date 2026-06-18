@@ -22,18 +22,19 @@ import { describe, expect, it } from 'vitest';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(path.join(__dirname, 'JobBoardPage.vue'), 'utf8');
 
-describe('JobBoardPage — Detail + Score replace Open (AC1)', () => {
+describe('JobBoardPage — Detail replaces Open (AC1)', () => {
   it("renders a 'Detail' action button", () => {
     expect(SRC).toMatch(/label="Detail"/);
-  });
-
-  it("renders a 'Score' action button", () => {
-    expect(SRC).toMatch(/label="Score"/);
   });
 
   it("does NOT render the previous 'Open' button", () => {
     expect(SRC).not.toMatch(/label="Open"/);
   });
+
+  // The JOBDET-003 placeholder 'Score' button is replaced in SCORE-006 by
+  // a live StarRating + percentage widget on the tile. The placeholder is
+  // intentionally gone — see JobBoardPage.score006.test.ts for the new
+  // assertions on the live score widget.
 });
 
 describe('JobBoardPage — Detail opens the modal in-place (AC2)', () => {
@@ -56,25 +57,9 @@ describe('JobBoardPage — Detail opens the modal in-place (AC2)', () => {
   });
 });
 
-describe('JobBoardPage — Score is a disabled placeholder (AC3)', () => {
-  it("the 'Score' button is disabled", () => {
-    const scoreBtn = SRC.match(/<q-btn[^>]*label="Score"[^>]*\/?>/);
-    expect(scoreBtn).not.toBeNull();
-    expect(scoreBtn![0]).toMatch(/\bdisable\b|:disable=|disabled/);
-  });
-
-  it("the 'Score' button advertises that scoring is not yet available (tooltip / title)", () => {
-    // A q-tooltip child or a title= attribute providing the affordance.
-    const hasTooltip =
-      /<q-btn[^>]*label="Score"[\s\S]*?<q-tooltip[\s\S]*?<\/q-btn>/.test(SRC) ||
-      /<q-btn[^>]*label="Score"[^>]*\btitle="[^"]+"/.test(SRC);
-    expect(hasTooltip).toBe(true);
-  });
-
-  it("'Score' wires no score data — no @click handler invoking scoring", () => {
-    const scoreBtn = SRC.match(/<q-btn[^>]*label="Score"[^>]*\/?>/);
-    expect(scoreBtn).not.toBeNull();
-    expect(scoreBtn![0]).not.toMatch(/@click=/);
+describe('JobBoardPage — Score placeholder is replaced by live score widget (AC3, superseded by SCORE-006)', () => {
+  it("no longer renders a disabled 'Score' button placeholder", () => {
+    expect(SRC).not.toMatch(/<q-btn[^>]*label="Score"\b/);
   });
 });
 

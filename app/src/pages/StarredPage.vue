@@ -13,7 +13,12 @@
     </div>
 
     <div class="grid">
-      <article v-for="j in store.starredJobs" :key="j.sourceId" class="tile">
+      <article
+        v-for="j in orderedStarred"
+        :key="j.sourceId"
+        class="tile"
+        :class="{ 'tile--strong': isStrong(store.scores[j.sourceId]) }"
+      >
         <header class="tile__head">
           <span class="monogram tile__mono">{{ initial(j) }}</span>
           <div class="tile__meta">
@@ -22,6 +27,19 @@
           </div>
           <span class="tile__tag">{{ j.hostname }}</span>
         </header>
+
+        <div class="tile__score">
+          <template v-if="store.scores[j.sourceId]">
+            <StarRating :score="store.scores[j.sourceId]!.stars" />
+            <span class="tile__percent">{{ Math.round(store.scores[j.sourceId]!.percent) }}% match</span>
+            <span
+              v-if="store.scores[j.sourceId]!.stale"
+              class="tile__stale"
+              title="Score is out of date — rescore to refresh"
+            >stale</span>
+          </template>
+          <span v-else class="tile__unscored">Not scored yet</span>
+        </div>
 
         <hr class="hair" />
 
@@ -41,11 +59,30 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
-import type { JobRecord } from 'src/types/models';
+import StarRating from 'src/components/StarRating.vue';
+import type { JobRecord, MatchScore } from 'src/types/models';
 
 const store = useAppStore();
+
+const STRONG_STARS = 4;
+function isStrong(score: MatchScore | undefined): boolean {
+  return !!score && score.stars >= STRONG_STARS;
+}
+
+/**
+ * Starred ordering (SCORE-006 AC2): strong matches lead, then by percent
+ * descending; unscored tiles sort last by fetch recency.
+ */
+const orderedStarred = computed<JobRecord[]>(() => {
+  const orderKey = (j: JobRecord) => store.scores[j.sourceId]?.percent ?? -1;
+  return [...store.starredJobs].sort((a, b) => {
+    const diff = orderKey(b) - orderKey(a);
+    if (diff !== 0) return diff;
+    return b.fetchedAt - a.fetchedAt;
+  });
+});
 
 function initial(j: JobRecord): string {
   const src = j.company || j.title || j.hostname || '?';
@@ -58,6 +95,7 @@ function subtitle(j: JobRecord): string {
 
 onMounted(async () => {
   await store.listJobs();
+  await store.listScores();
 });
 </script>
 
@@ -82,6 +120,7 @@ onMounted(async () => {
   flex-direction: column;
   gap: 13px;
   &:hover { border-color: var(--border-strong); }
+  &--strong { border-color: var(--accent); }
   &__head { display: flex; align-items: flex-start; gap: 12px; }
   &__mono { width: 42px; height: 42px; font-size: 17px; }
   &__meta { flex: 1; min-width: 0; }
@@ -96,6 +135,10 @@ onMounted(async () => {
     display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   &__tag { font: 500 10px/1 var(--font-mono); color: var(--olive-text); background: var(--olive-tint); padding: 4px 7px; border-radius: 5px; flex-shrink: 0; }
+  &__score { display: flex; align-items: center; gap: 8px; min-height: 18px; }
+  &__percent { font: 500 12px/1 var(--font-mono); color: var(--text-2); }
+  &__stale { font: 500 10px/1 var(--font-mono); color: var(--olive-text); background: var(--olive-tint); padding: 3px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  &__unscored { font-size: 12.5px; color: var(--muted); font-style: italic; }
   &__actions { display: flex; gap: 9px; }
 }
 .col-grow { flex: 1; }
