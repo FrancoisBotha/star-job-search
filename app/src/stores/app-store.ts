@@ -531,6 +531,18 @@ export const useAppStore = defineStore('app', {
       if (site) site.enabled = enabled;
     },
     /**
+     * Persist the optional per-site username via the `sites:setUsername`
+     * channel (SITEUSR-001) and mirror the value into the local cache so the
+     * Settings input reflects it without a re-list. No-ops gracefully when the
+     * bridge is absent (browser SPA build), mirroring [[setSiteEnabled]].
+     */
+    async setSiteUsername(id: string, username: string) {
+      const bridge = typeof window !== 'undefined' ? window.starSites : undefined;
+      if (bridge) await bridge.setUsername(id, username);
+      const site = this.sites.find((s) => s.id === id);
+      if (site) site.username = username;
+    },
+    /**
      * Fetch the extracted job postings via `board:list`. Optional filter is
      * passed through verbatim so callers can request only e.g. unseen jobs.
      * No-ops when the bridge is absent (browser SPA build).

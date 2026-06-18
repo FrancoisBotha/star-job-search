@@ -6,12 +6,13 @@
  * the main process — the Architecture's chosen single source of truth for
  * local data.
  *
- * Only the MVP1 fields are persisted here: `id, url, host, label, enabled,
- * addedAt`. The deferred PRD §8 fields belong to the per-site adapter epic
- * and are deliberately absent (scope boundary — see the epic spec).
+ * Persisted fields: `id, url, host, label, enabled, addedAt` and the optional
+ * per-site `username` (SITEUSR-001). The deferred PRD §8 fields belong to the
+ * per-site adapter epic and are deliberately absent (scope boundary — see the
+ * epic spec).
  *
  * Renderer talks to this module via the preload-bridge channels:
- *   sites:list | sites:add | sites:remove
+ *   sites:list | sites:add | sites:remove | sites:setEnabled | sites:setUsername
  */
 import { randomUUID } from 'node:crypto';
 import Database from 'better-sqlite3';
@@ -24,6 +25,8 @@ export interface Site {
   label: string;
   enabled: boolean;
   addedAt: number;
+  /** Optional per-site username (SITEUSR-001). Null when never set. */
+  username: string | null;
 }
 
 export interface NormalisedSiteInput {
@@ -53,6 +56,8 @@ export interface SitesStore {
   remove(id: string): void;
   /** Toggle whether a site is active (shown as a tab on Discover). */
   setEnabled(id: string, enabled: boolean): void;
+  /** Persist the optional per-site username (SITEUSR-001). */
+  setUsername(id: string, username: string | null): void;
 }
 
 /**
@@ -93,7 +98,8 @@ const CREATE_TABLE_SQL = `
     host      TEXT NOT NULL,
     label     TEXT NOT NULL,
     enabled   INTEGER NOT NULL DEFAULT 1,
-    added_at  INTEGER NOT NULL
+    added_at  INTEGER NOT NULL,
+    username  TEXT
   )
 `;
 
@@ -104,6 +110,7 @@ interface SiteRow {
   label: string;
   enabled: number;
   added_at: number;
+  username: string | null;
 }
 
 function rowToSite(row: SiteRow): Site {
@@ -114,20 +121,42 @@ function rowToSite(row: SiteRow): Site {
     label: row.label,
     enabled: row.enabled !== 0,
     addedAt: row.added_at,
+    username: row.username ?? null,
   };
+}
+
+/**
+ * Additive migration for the optional `username` column (SITEUSR-001).
+ *
+ * The CREATE TABLE above declares the column for fresh databases. Pre-existing
+ * databases created before SITEUSR-001 still load — we try an ALTER TABLE ...
+ * ADD COLUMN and swallow the duplicate-column error SQLite raises when the
+ * column already exists, leaving the data intact.
+ */
+function migrateAddUsernameColumn(db: SitesDatabaseLike): void {
+  try {
+    db.exec('ALTER TABLE sites ADD COLUMN username TEXT');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/duplicate column name/i.test(message)) {
+      throw err;
+    }
+  }
 }
 
 export function createSitesStore(db: SitesDatabaseLike): SitesStore {
   db.exec(CREATE_TABLE_SQL);
+  migrateAddUsernameColumn(db);
 
   const listStmt = db.prepare(
-    'SELECT id, url, host, label, enabled, added_at FROM sites ORDER BY added_at ASC',
+    'SELECT id, url, host, label, enabled, added_at, username FROM sites ORDER BY added_at ASC',
   );
   const insertStmt = db.prepare(
-    'INSERT INTO sites (id, url, host, label, enabled, added_at) VALUES (@id, @url, @host, @label, @enabled, @added_at)',
+    'INSERT INTO sites (id, url, host, label, enabled, added_at, username) VALUES (@id, @url, @host, @label, @enabled, @added_at, @username)',
   );
   const deleteStmt = db.prepare('DELETE FROM sites WHERE id = ?');
   const setEnabledStmt = db.prepare('UPDATE sites SET enabled = ? WHERE id = ?');
+  const setUsernameStmt = db.prepare('UPDATE sites SET username = ? WHERE id = ?');
 
   return {
     list(): Site[] {
@@ -143,6 +172,7 @@ export function createSitesStore(db: SitesDatabaseLike): SitesStore {
         label: input.label?.trim() || host,
         enabled: true,
         addedAt: Date.now(),
+        username: null,
       };
       insertStmt.run({
         id: site.id,
@@ -151,6 +181,7 @@ export function createSitesStore(db: SitesDatabaseLike): SitesStore {
         label: site.label,
         enabled: site.enabled ? 1 : 0,
         added_at: site.addedAt,
+        username: site.username,
       });
       return site;
     },
@@ -159,6 +190,10 @@ export function createSitesStore(db: SitesDatabaseLike): SitesStore {
     },
     setEnabled(id: string, enabled: boolean): void {
       setEnabledStmt.run(enabled ? 1 : 0, id);
+    },
+    setUsername(id: string, username: string | null): void {
+      const value = typeof username === 'string' ? username : null;
+      setUsernameStmt.run(value, id);
     },
   };
 }
@@ -173,7 +208,8 @@ export function openSitesDatabase(filepath: string): SitesDatabaseLike {
 }
 
 /**
- * Register the `sites:list`, `sites:add`, `sites:remove` IPC handlers.
+ * Register the `sites:list`, `sites:add`, `sites:remove`, `sites:setEnabled`,
+ * and `sites:setUsername` IPC handlers.
  *
  * Each handler is `async`, so even though `better-sqlite3` itself is
  * synchronous, the IPC call returns control to the event loop immediately
@@ -189,6 +225,12 @@ export function registerSitesIpc(ipcMain: IpcMain, store: SitesStore): void {
     'sites:setEnabled',
     async (_event, input: { id: string; enabled: boolean }) => {
       store.setEnabled(input.id, input.enabled);
+    },
+  );
+  ipcMain.handle(
+    'sites:setUsername',
+    async (_event, input: { id: string; username: string | null }) => {
+      store.setUsername(input.id, input.username ?? null);
     },
   );
 }

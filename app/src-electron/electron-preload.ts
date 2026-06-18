@@ -45,6 +45,8 @@ contextBridge.exposeInMainWorld('starSites', {
   remove: (id: string) => ipcRenderer.invoke('sites:remove', id),
   setEnabled: (id: string, enabled: boolean) =>
     ipcRenderer.invoke('sites:setEnabled', { id, enabled }),
+  setUsername: (id: string, username: string) =>
+    ipcRenderer.invoke('sites:setUsername', { id, username }),
 });
 
 // Singleton Profile bridge (CVPROF-001). `get` returns the persisted Profile

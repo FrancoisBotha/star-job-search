@@ -32,6 +32,8 @@ interface StarSite {
   label: string;
   enabled: boolean;
   addedAt: number;
+  /** Optional per-site username (SITEUSR-001). Null when never set. */
+  username: string | null;
 }
 
 /** Bridge exposed by src-electron/electron-preload.ts for the persisted sites list. */
@@ -40,6 +42,8 @@ interface StarSitesApi {
   add: (input: { url: string; label?: string }) => Promise<StarSite>;
   remove: (id: string) => Promise<void>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
+  /** Persist the optional per-site username (SITEUSR-001). */
+  setUsername: (id: string, username: string) => Promise<void>;
 }
 
 /** The user's single editable Profile (CVPROF-001). */
