@@ -27,18 +27,24 @@
     <div class="cols">
       <div>
         <div class="eyebrow" style="margin-bottom: 6px">Top matches today</div>
+        <div v-if="topMatches.length === 0" class="empty-row">
+          No scored matches yet — run a scan or rescore to populate this list.
+        </div>
         <div
-          v-for="m in topMatches"
-          :key="m.id"
+          v-for="j in topMatches"
+          :key="j.sourceId"
           class="match-row"
           @click="goJob"
         >
-          <span class="monogram match-row__mono">{{ m.mono }}</span>
+          <span class="monogram match-row__mono">{{ initial(j) }}</span>
           <div class="match-row__meta">
-            <div class="match-row__title">{{ m.role }}</div>
-            <div class="match-row__sub">{{ m.co }} · {{ m.loc }} · {{ m.salary }}</div>
+            <div class="match-row__title">{{ j.title || j.url }}</div>
+            <div class="match-row__sub">{{ subtitle(j) }}</div>
           </div>
-          <StarRating :score="m.score" />
+          <span class="match-row__score">
+            <StarRating :score="store.scores[j.sourceId]?.stars ?? 0" />
+            <span class="match-row__pct">{{ percentLabel(j) }}</span>
+          </span>
           <q-btn flat dense no-caps class="open-btn" label="Open" @click.stop="goJob" />
         </div>
       </div>
@@ -65,21 +71,53 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import StarRating from 'components/StarRating.vue';
-import { MATCHES, SCAN_SOURCES } from 'src/data/sample';
+import { SCAN_SOURCES } from 'src/data/sample';
+import { useAppStore } from 'src/stores/app-store';
+import type { JobRecord } from 'src/types/models';
 
 const router = useRouter();
+const store = useAppStore();
 const goJob = () => router.push({ name: 'jobdetail' });
 
-const stats = [
-  { label: 'Scanned', value: '1,482', accent: false },
-  { label: 'Strong', value: '38', accent: true },
-  { label: 'Applied', value: '14', accent: false },
-  { label: 'Interviews', value: '3', accent: false },
-];
-const topMatches = MATCHES.slice(0, 3);
+const stats = computed(() => [
+  { label: 'Scanned', value: String(store.jobs.length), accent: false },
+  { label: 'Strong', value: String(store.strongMatchCount), accent: true },
+  { label: 'Applied', value: '0', accent: false },
+  { label: 'Interviews', value: '0', accent: false },
+]);
+
+const topMatches = computed<JobRecord[]>(() =>
+  store.topMatches.filter((j) => !!store.scores[j.sourceId]).slice(0, 5),
+);
+
 const sources = SCAN_SOURCES;
+
+function initial(j: JobRecord): string {
+  const src = j.company || j.title || j.hostname || '?';
+  return src.trim().charAt(0).toUpperCase() || '?';
+}
+
+function subtitle(j: JobRecord): string {
+  return [j.company, j.location].filter(Boolean).join(' · ') || j.hostname;
+}
+
+function percentLabel(j: JobRecord): string {
+  const score = store.scores[j.sourceId];
+  return score ? `${Math.round(score.percent)}%` : '';
+}
+
+onMounted(async () => {
+  store.subscribeScoresProgress();
+  await store.listJobs();
+  await store.listScores();
+});
+
+onBeforeUnmount(() => {
+  store.unsubscribeScoresProgress();
+});
 </script>
 
 <style scoped lang="scss">
@@ -105,6 +143,9 @@ const sources = SCAN_SOURCES;
   &__sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
 }
 .open-btn { color: var(--accent); border: 1px solid var(--border-strong); border-radius: 7px; height: 30px; }
+.empty-row { padding: 18px 0; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--hair); }
+.match-row__score { display: inline-flex; align-items: center; gap: 8px; }
+.match-row__pct { font: 500 12px/1 var(--font-mono); color: var(--text-3); min-width: 36px; text-align: right; }
 
 .scan-list { display: flex; flex-direction: column; gap: 15px; }
 .scan__head { display: flex; justify-content: space-between; font-size: 13px; color: var(--text-2); margin-bottom: 7px; }
