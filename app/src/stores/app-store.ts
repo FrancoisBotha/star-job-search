@@ -49,6 +49,50 @@ const IDLE_REVIEW_STATE: MatchReviewGenerateState = {
   message: null,
 };
 
+/**
+ * Renderer-side mirror of the persisted TailoredDoc (TAILOR-003 /
+ * TAILOR-004 / Epic 7 §7) — narrative + ATS only (NFR-002 hard boundary
+ * keeps numeric ratings inside Epic 5). Re-export of the ambient
+ * [[StarTailoredDoc]] shape so callers can import it from a single module
+ * alongside the store.
+ */
+export type TailoredDoc = StarTailoredDoc;
+
+/** Renderer-side mirror of the persisted kind discriminator. */
+export type TailoredDocKind = StarTailoredDocKind;
+
+/**
+ * Per-(sourceId, kind) action state for tailoring (TAILOR-005 / Epic 7 §8).
+ * Shared by generate / accept — both move the same key through
+ * idle → loading → idle on success / error with the stable
+ * [[StarTailorErrorCode]] (NO_API_KEY / NO_DEFAULT_MODEL / NO_CV /
+ * JOB_NOT_FOUND / DRAFT_NOT_FOUND / SUGGESTION_NOT_FOUND /
+ * MODEL_NOT_CAPABLE / RATE_LIMITED / NETWORK_ERROR / LLM_ERROR /
+ * SCHEMA_ERROR) so the UI can render the matching message without parsing
+ * exception text (FR-014 / NFR-004).
+ */
+export interface TailorActionState {
+  status: 'idle' | 'loading' | 'error';
+  code: StarTailorErrorCode | null;
+  message: string | null;
+}
+
+const IDLE_TAILOR_STATE: TailorActionState = {
+  status: 'idle',
+  code: null,
+  message: null,
+};
+
+/**
+ * Composite key for the tailored-docs map. Keying by both `sourceId` and
+ * `kind` is required because a single job can have both a tailored CV and
+ * a tailored cover letter cached in parallel — both are valid drafts at
+ * once.
+ */
+function tailorKey(sourceId: string, kind: TailoredDocKind): string {
+  return `${sourceId}::${kind}`;
+}
+
 /** ★4+ threshold for the strong-match selector (Epic 5 §3, AC §10). */
 const STRONG_MATCH_STAR_THRESHOLD = 4;
 
@@ -272,6 +316,22 @@ interface AppState {
    * [[hydrateReviewDisclosure]] / [[acknowledgeReviewDisclosure]].
    */
   reviewDisclosureAcknowledged: boolean;
+  /**
+   * Persisted TailoredDoc rows keyed by `${sourceId}::${kind}` (TAILOR-005 /
+   * Epic 7 §7). Narrative + ATS only — by hard boundary (Epic 7 /
+   * NFR-002) no score / star / percent appears in this map. Hydrated
+   * lazily via [[getTailoredDoc]] and refreshed on
+   * [[generateTailoredDoc]] / [[acceptTailoredSuggestion]] success.
+   */
+  tailoredDocs: Record<string, TailoredDoc>;
+  /**
+   * Per-(sourceId, kind) action state keyed by `${sourceId}::${kind}`.
+   * Tracks idle / loading / error (with the stable error code) so the
+   * Job-detail Tailor tabs can render specific messages for NO_API_KEY,
+   * NO_CV, MODEL_NOT_CAPABLE, SUGGESTION_NOT_FOUND, etc. without parsing
+   * exception text (FR-014 / NFR-004).
+   */
+  tailorStates: Record<string, TailorActionState>;
 }
 
 export const useAppStore = defineStore('app', {
@@ -311,6 +371,8 @@ export const useAppStore = defineStore('app', {
     reviews: {},
     reviewStates: {},
     reviewDisclosureAcknowledged: false,
+    tailoredDocs: {},
+    tailorStates: {},
   }),
 
   getters: {
@@ -454,6 +516,67 @@ export const useAppStore = defineStore('app', {
       (state) =>
       (sourceId: string): MatchReviewGenerateState =>
         state.reviewStates[sourceId] ?? IDLE_REVIEW_STATE,
+    /**
+     * True iff a cached TailoredDoc exists for (sourceId, kind) (TAILOR-005
+     * AC1). Drives the "Generate" vs "Show draft" toggle on the Tailor
+     * tabs of the Job-detail modal.
+     */
+    hasTailoredDoc:
+      (state) =>
+      (sourceId: string, kind: TailoredDocKind): boolean =>
+        Boolean(state.tailoredDocs[tailorKey(sourceId, kind)]),
+    /**
+     * Provenance ("AI · {model} · {date}") for a cached tailored draft
+     * (TAILOR-005 AC1 / Epic 7 §6). Returns `null` when no draft is
+     * cached for (sourceId, kind).
+     */
+    tailoredDocProvenance:
+      (state) =>
+      (
+        sourceId: string,
+        kind: TailoredDocKind,
+      ): { modelSlug?: string; generatedAt?: number } | null => {
+        const d = state.tailoredDocs[tailorKey(sourceId, kind)];
+        if (!d) return null;
+        return { modelSlug: d.modelSlug, generatedAt: d.generatedAt };
+      },
+    /**
+     * True when the cached draft's `stale` flag is set — drives the
+     * "may be out of date — Regenerate" banner per (sourceId, kind)
+     * (TAILOR-005 AC2 / FR-016). Cache fronts the persisted flag main
+     * sets when the base CV / Profile changes or the job is re-extracted.
+     */
+    isTailoredDocStale:
+      (state) =>
+      (sourceId: string, kind: TailoredDocKind): boolean =>
+        Boolean(state.tailoredDocs[tailorKey(sourceId, kind)]?.stale),
+    /**
+     * Per-(sourceId, kind) action state lookup (TAILOR-005 AC1 / FR-014).
+     * Always returns a defined snapshot so the Tailor tabs can render
+     * without nullish guards — defaults to the shared `idle` constant.
+     */
+    tailorStateFor:
+      (state) =>
+      (sourceId: string, kind: TailoredDocKind): TailorActionState =>
+        state.tailorStates[tailorKey(sourceId, kind)] ?? IDLE_TAILOR_STATE,
+    /**
+     * Read a cached TailoredDoc synchronously (TAILOR-005 AC1). Returns
+     * `null` when no draft is cached — callers asking for a fresh copy
+     * should use the async [[getTailoredDoc]] action instead.
+     */
+    getTailoredDocCached:
+      (state) =>
+      (sourceId: string, kind: TailoredDocKind): TailoredDoc | null =>
+        state.tailoredDocs[tailorKey(sourceId, kind)] ?? null,
+    /**
+     * True when an OpenRouter key is configured. Tailoring is unavailable
+     * without a key (TAILOR-005 AC3 / FR-014 / NFR-003) — the UI uses
+     * this getter to disable the Generate control and surface a "Connect
+     * a model in Settings" hint. The generate action itself also returns
+     * NO_API_KEY from main when invoked without a key, so this is a
+     * defence-in-depth gate, not the only one.
+     */
+    isTailoringAvailable: (state): boolean => state.apiKeyStatus.present,
   },
 
   actions: {
@@ -1124,6 +1247,183 @@ export const useAppStore = defineStore('app', {
           message: err instanceof Error ? err.message : 'review failed',
         };
         return { ok: false, code: 'LLM_ERROR', error: 'review failed' };
+      }
+    },
+    /**
+     * Hydrate a single TailoredDoc from main via `tailor:get` (TAILOR-005
+     * AC1). Inserts the row into `state.tailoredDocs` keyed by
+     * `${sourceId}::${kind}` so the provenance / stale selectors update
+     * without re-fetching. Returns the persisted draft (or null when none
+     * exists / the bridge is absent).
+     */
+    async getTailoredDoc(input: {
+      sourceId: string;
+      kind: TailoredDocKind;
+    }): Promise<TailoredDoc | null> {
+      const bridge = typeof window !== 'undefined' ? window.starTailor : undefined;
+      if (!bridge) return null;
+      const row = await bridge.get(input);
+      if (row) this.tailoredDocs[tailorKey(input.sourceId, input.kind)] = row;
+      return row;
+    },
+    /**
+     * Generate (or regenerate) a tailored CV / cover letter via
+     * `tailor:generate` (TAILOR-005 AC1 / AC3). Manages the per-key state
+     * machine (idle → loading → idle on success / error with code on
+     * failure) and stores the persisted draft keyed by
+     * `${sourceId}::${kind}` on success.
+     *
+     * **Disclosure gate (AC3 / FR-014).** The first send of JD + CV text
+     * is gated behind the Epic 4 "what is sent" disclosure — when
+     * [[reviewDisclosureAcknowledged]] is false this action no-ops
+     * without reaching the bridge. The same one-time flag is shared with
+     * the AI Match Review (AIREV-004) so acknowledging in either place
+     * unlocks both.
+     */
+    async generateTailoredDoc(input: {
+      sourceId: string;
+      kind: TailoredDocKind;
+      intensity?: StarTailorIntensity;
+    }): Promise<StarTailorGenerateResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starTailor : undefined;
+      if (!bridge) return undefined;
+      if (!this.reviewDisclosureAcknowledged) {
+        this.hydrateReviewDisclosure();
+        if (!this.reviewDisclosureAcknowledged) return undefined;
+      }
+      const key = tailorKey(input.sourceId, input.kind);
+      this.tailorStates[key] = {
+        status: 'loading',
+        code: null,
+        message: null,
+      };
+      try {
+        const payload: StarTailorGenerateInput = {
+          sourceId: input.sourceId,
+          kind: input.kind,
+        };
+        if (input.intensity) payload.intensity = input.intensity;
+        const result = await bridge.generate(payload);
+        if (result.ok) {
+          this.tailoredDocs[key] = result.doc;
+          this.tailorStates[key] = {
+            status: 'idle',
+            code: null,
+            message: null,
+          };
+        } else {
+          this.tailorStates[key] = {
+            status: 'error',
+            code: result.code,
+            message: result.error,
+          };
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'tailor failed';
+        this.tailorStates[key] = {
+          status: 'error',
+          code: 'LLM_ERROR',
+          message,
+        };
+        return { ok: false, code: 'LLM_ERROR', error: message };
+      }
+    },
+    /**
+     * Accept one suggestion on a cached draft via `tailor:accept`
+     * (TAILOR-005 AC4 / FR-012). Main removes the suggestion from the
+     * persisted draft AND triggers the deterministic Epic 5 rescore for
+     * the job — the LLM is NEVER consulted on the accept path
+     * (NFR-002 hard boundary). The renderer reflects the recomputed
+     * star/% live by reading the freshly-recomputed [[StarMatchScore]]
+     * from `scores:get` — the store NEVER computes any score itself.
+     */
+    async acceptTailoredSuggestion(input: {
+      sourceId: string;
+      kind: TailoredDocKind;
+      suggestionId: string;
+    }): Promise<StarTailorAcceptResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starTailor : undefined;
+      if (!bridge) return undefined;
+      const key = tailorKey(input.sourceId, input.kind);
+      this.tailorStates[key] = {
+        status: 'loading',
+        code: null,
+        message: null,
+      };
+      try {
+        const result = await bridge.accept(input);
+        if (result.ok) {
+          this.tailoredDocs[key] = result.doc;
+          this.tailorStates[key] = {
+            status: 'idle',
+            code: null,
+            message: null,
+          };
+          // FR-012 — refresh the recomputed deterministic Epic 5 score
+          // straight from main. The score is NOT computed here; it is
+          // already persisted by the Epic 5 scorer that ran inside
+          // tailor:accept on the main side, and we just mirror it.
+          await this.getScore(input.sourceId).catch(() => {});
+        } else {
+          this.tailorStates[key] = {
+            status: 'error',
+            code: result.code,
+            message: result.error,
+          };
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'accept failed';
+        this.tailorStates[key] = {
+          status: 'error',
+          code: 'LLM_ERROR',
+          message,
+        };
+        return { ok: false, code: 'LLM_ERROR', error: message };
+      }
+    },
+    /**
+     * Export a tailored draft via `tailor:export` (TAILOR-005 AC1 /
+     * FR-015). The renderer takes the returned `text/markdown` payload
+     * and lets the user copy / save / paste it — there is NO submission
+     * path. Returns `undefined` when the bridge is absent.
+     */
+    async exportTailoredDoc(input: {
+      sourceId: string;
+      kind: TailoredDocKind;
+    }): Promise<StarTailorExportResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starTailor : undefined;
+      if (!bridge) return undefined;
+      return bridge.export(input);
+    },
+    /**
+     * Flip both kinds of cached draft for one job stale locally
+     * (TAILOR-005 AC2 / FR-016). Called by the Job-detail modal when a
+     * re-extraction event fires so the UI can show the "may be out of
+     * date — Regenerate" banner without a round-trip to main. Main has
+     * already persisted the stale flag in `tailored_docs` via the
+     * markTailoredDocStale hook (TAILOR-004); this is the renderer-side
+     * mirror.
+     */
+    markTailoredDocsStaleForJob(sourceId: string) {
+      for (const kind of ['cv', 'cover-letter'] as TailoredDocKind[]) {
+        const key = tailorKey(sourceId, kind);
+        const doc = this.tailoredDocs[key];
+        if (doc) this.tailoredDocs[key] = { ...doc, stale: true };
+      }
+    },
+    /**
+     * Flip every cached draft stale locally (TAILOR-005 AC2 / FR-016).
+     * Called by the Profile / CV change hooks (CV upload, profile edit,
+     * etc.) so every tailoring tab reflects the stale banner before the
+     * user re-opens the modal. Mirrors the main-side
+     * markAllTailoredDocsStale hook.
+     */
+    markAllTailoredDocsStale() {
+      for (const key of Object.keys(this.tailoredDocs)) {
+        const doc = this.tailoredDocs[key];
+        if (doc) this.tailoredDocs[key] = { ...doc, stale: true };
       }
     },
     async structureCv(text: string): Promise<StarCvStructureResult | null> {
