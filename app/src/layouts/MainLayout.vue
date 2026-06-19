@@ -70,10 +70,10 @@
           </nav>
 
           <button class="user" @click="go('profile')">
-            <span class="user__avatar font-serif">AM</span>
+            <span class="user__avatar font-serif">{{ userInitials }}</span>
             <span class="user__meta">
-              <span class="user__name">Alex Morgan</span>
-              <span class="user__role">Product Designer</span>
+              <span class="user__name">{{ userName }}</span>
+              <span class="user__role">{{ userRole }}</span>
             </span>
           </button>
         </aside>
@@ -116,6 +116,28 @@ onMounted(() => {
   window.starWindow?.onMaximizedChange((maximized) => {
     isMaximized.value = maximized;
   });
+});
+
+// Sidebar user block — reflects the persisted Profile singleton
+// (CVPROF-015 AC2/AC4). Name, initials and target role derive reactively
+// from `store.profile`; neutral placeholders render before any profile
+// is saved so the prior mock identity never resurfaces.
+const userName = computed(() => {
+  const name = store.profile?.name?.trim();
+  return name && name.length > 0 ? name : 'Your profile';
+});
+const userRole = computed(() => {
+  const targetRole = store.profile?.targetRole?.trim();
+  return targetRole && targetRole.length > 0 ? targetRole : 'Set your target role';
+});
+const userInitials = computed(() => {
+  const name = store.profile?.name?.trim();
+  if (!name) return '★';
+  const parts = name.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] ?? '';
+  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? '') : '';
+  const initials = (first + last).toUpperCase();
+  return initials || '★';
 });
 
 // Job detail & tailoring keep "Discover" highlighted.

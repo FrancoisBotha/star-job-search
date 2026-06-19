@@ -3,7 +3,7 @@
     <!-- header -->
     <div class="head">
       <div>
-        <div class="font-serif greeting">Good morning, Alex</div>
+        <div class="font-serif greeting">{{ greeting }}</div>
         <p class="sub">
           12 new matches found overnight —
           <span class="font-serif accent-em">4 worth a closer look.</span>
@@ -81,6 +81,18 @@ import type { JobRecord } from 'src/types/models';
 const router = useRouter();
 const store = useAppStore();
 const goJob = () => router.push({ name: 'jobdetail' });
+
+// Greeting uses the first name from the persisted Profile singleton
+// (CVPROF-015 AC3/AC4). Falls back to a neutral "Good morning" when no
+// name is set so the hardcoded "Alex" mock never resurfaces.
+const firstName = computed(() => {
+  const name = store.profile?.name?.trim();
+  if (!name) return '';
+  return name.split(/\s+/)[0] ?? '';
+});
+const greeting = computed(() =>
+  firstName.value ? `Good morning, ${firstName.value}` : 'Good morning',
+);
 
 const stats = computed(() => [
   { label: 'Scanned', value: String(store.jobs.length), accent: false },
