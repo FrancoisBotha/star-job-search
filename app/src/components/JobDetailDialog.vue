@@ -64,7 +64,11 @@
         </ul>
       </section>
 
-      <section class="jdd__section jdd__review" aria-labelledby="jdd-review-heading">
+      <section
+        ref="reviewSection"
+        class="jdd__section jdd__review"
+        aria-labelledby="jdd-review-heading"
+      >
         <header class="jdd__review-head">
           <h3 id="jdd-review-heading" class="jdd__h3 jdd__review-h3">
             AI Match Review
@@ -266,7 +270,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
 import type { MatchReview, MatchReviewGenerateState } from 'src/stores/app-store';
 import StarRating from 'src/components/StarRating.vue';
@@ -287,10 +291,22 @@ export interface JobDetailJob extends JobRecord {
   sources?: Array<{ hostname: string; url: string }> | null;
 }
 
-const props = defineProps<{
-  modelValue: boolean;
-  job: JobDetailJob;
-}>();
+const props = withDefaults(
+  defineProps<{
+    modelValue: boolean;
+    job: JobDetailJob;
+    /**
+     * AIREV-009 — when true, the dialog scrolls the AI Match Review
+     * section into view on open and, if no review is cached and the user
+     * has the prerequisites (key + default model + CV), kicks off the
+     * on-demand generate so the user lands on a generating/ready report
+     * instead of an empty section. Defaults to false so the existing
+     * Detail-button flow is unchanged.
+     */
+    focusReview?: boolean;
+  }>(),
+  { focusReview: false },
+);
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void;
@@ -458,17 +474,44 @@ function onAcknowledgeAndGenerate() {
  * to regenerate. Also pulls the persisted disclosure ack so the Generate
  * gate is correct on the very first click.
  */
+const reviewSection = ref<HTMLElement | null>(null);
+
+/**
+ * AIREV-009 — bring the AI Match Review section into view and, when the
+ * dialog was opened via the board's AI button with no cached review and
+ * the user has the prerequisites, trigger the on-demand generate path so
+ * the user lands on a generating/ready report rather than an empty
+ * section. Degrades gracefully when no key/model/CV is present: the
+ * existing disabled Generate state and "needs key" hint render unchanged.
+ */
+async function maybeFocusReview() {
+  if (!props.modelValue || !props.focusReview) return;
+  await nextTick();
+  const el = reviewSection.value;
+  if (el && typeof el.scrollIntoView === 'function') {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  if (
+    !store.reviews[props.job.sourceId] &&
+    canGenerateReview.value &&
+    reviewState.value.status !== 'loading'
+  ) {
+    onGenerateReview();
+  }
+}
+
 function maybeHydrate() {
   if (!props.modelValue) return;
   if (!store.reviewDisclosureAcknowledged) store.hydrateReviewDisclosure();
   if (!store.reviews[props.job.sourceId]) {
     void store.getReview(props.job.sourceId);
   }
+  void maybeFocusReview();
 }
 
 onMounted(maybeHydrate);
 watch(
-  () => [props.modelValue, props.job.sourceId] as const,
+  () => [props.modelValue, props.job.sourceId, props.focusReview] as const,
   () => maybeHydrate(),
 );
 </script>

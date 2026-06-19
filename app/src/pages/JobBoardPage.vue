@@ -53,6 +53,15 @@
 
         <footer class="tile__actions">
           <q-btn unelevated color="primary" no-caps class="col-grow" label="Detail" @click="openDetail(j)" />
+          <q-btn
+            outline
+            no-caps
+            class="ai-btn"
+            label="AI"
+            title="Open the AI Match Review for this job"
+            aria-label="Open AI Match Review"
+            @click="openReview(j)"
+          />
           <button
             type="button"
             class="star"
@@ -74,7 +83,12 @@
       </article>
     </div>
 
-    <JobDetailDialog v-if="selectedJob" v-model="detailOpen" :job="selectedJob" />
+    <JobDetailDialog
+      v-if="selectedJob"
+      v-model="detailOpen"
+      :job="selectedJob"
+      :focus-review="focusReview"
+    />
   </div>
 </template>
 
@@ -89,6 +103,7 @@ const store = useAppStore();
 
 const detailOpen = ref(false);
 const selectedJob = ref<JobRecord | null>(null);
+const focusReview = ref(false);
 
 /**
  * Strong-match threshold (Epic 5 §3) — a score reads as a "match" when its
@@ -117,6 +132,13 @@ const orderedJobs = computed<JobRecord[]>(() => {
 
 function openDetail(j: JobRecord) {
   selectedJob.value = j;
+  focusReview.value = false;
+  detailOpen.value = true;
+}
+
+function openReview(j: JobRecord) {
+  selectedJob.value = j;
+  focusReview.value = true;
   detailOpen.value = true;
 }
 
@@ -185,6 +207,15 @@ onMounted(async () => {
 }
 .col-grow { flex: 1; }
 .dismiss { color: var(--muted); border-color: var(--border-strong); }
+.ai-btn {
+  flex-shrink: 0;
+  color: var(--accent);
+  border-color: var(--border-strong);
+  font: 600 12px/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  padding: 0 10px;
+  &:hover { border-color: var(--accent); }
+}
 .star {
   width: 38px; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
