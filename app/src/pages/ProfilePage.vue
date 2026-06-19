@@ -51,6 +51,16 @@
             <span v-for="c in cvTags" :key="c" class="chip font-mono">{{ c }}</span>
           </div>
 
+          <!-- your details -->
+          <div class="eyebrow lbl">Your details</div>
+          <q-input
+            :model-value="store.profile?.name ?? ''"
+            outlined dense class="field"
+            placeholder="Alex Morgan"
+            label="Full name"
+            @update:model-value="onNameChange"
+          />
+
           <!-- links -->
           <div class="eyebrow lbl">LinkedIn &amp; web</div>
           <q-input
@@ -264,6 +274,10 @@ async function onFileChosen(event: Event) {
   }
   uploadMessage.value = null;
   await store.replaceCv({ filePath, fileName: file.name, mime });
+}
+
+async function onNameChange(value: string | number | null) {
+  await store.saveProfile({ name: typeof value === 'string' ? value : '' });
 }
 
 async function onLinkedinChange(value: string | number | null) {
