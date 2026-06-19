@@ -38,6 +38,13 @@
         </div>
 
         <q-btn outline no-caps label="Copy" :disable="!doc" @click="copy" />
+        <q-btn
+          v-if="kind === 'cover-letter'"
+          outline no-caps label="Export text"
+          data-test="export-text"
+          :disable="!doc"
+          @click="onExportText"
+        />
         <q-btn unelevated color="primary" no-caps label="Export Markdown" :disable="!doc" @click="onExport" />
       </div>
     </div>
@@ -96,14 +103,64 @@
           </div>
         </div>
 
-        <!-- Cover-letter view. -->
-        <div v-else class="paper letter">
+        <!-- Cover-letter view (TAILOR-007). Editable in-place; the recipient
+             company + title from the JD are surfaced inline so the reader can
+             see what the draft is tailored to (AC1). The textarea is the
+             single source of truth for Copy / Export-text / Export-Markdown
+             so every edit flows through unchanged (AC2 / AC5). -->
+        <div v-else class="paper letter letter-view" data-test="letter-view">
           <div class="provenance" data-test="provenance">
             <span class="provenance__tag">AI draft · advisory</span>
             <span class="provenance__meta">{{ provenanceLabel }}</span>
             <span v-if="store.currentCv" class="provenance__meta">built from CV v{{ store.currentCv.version }}</span>
           </div>
-          <pre class="letter__body">{{ doc.content }}</pre>
+
+          <header class="letter__to" data-test="letter-to">
+            <span class="letter__to-label font-mono">RE</span>
+            <span class="letter__to-title" data-test="letter-title">{{ jobTitle || 'this role' }}</span>
+            <span class="letter__to-sep">·</span>
+            <span class="letter__to-company" data-test="letter-company">{{ jobCompany || 'this company' }}</span>
+          </header>
+
+          <textarea
+            class="letter__editor"
+            data-test="letter-editor"
+            spellcheck="true"
+            rows="18"
+            v-model="letterContent"
+          ></textarea>
+
+          <!-- Gap-questions panel (FR-011 / AC3). Material gaps — domain,
+               start date, seniority, language — are surfaced as questions
+               the user answers; we never silently paper over them. Each
+               question carries Confirm + Not applicable affordances. -->
+          <section class="gaps gap-questions" data-test="gap-questions" aria-label="Open questions">
+            <div class="gaps__head">
+              <h4 class="gaps__title">Open questions</h4>
+              <span class="gaps__sub">Confirm these gaps before sending — we don't paper them over.</span>
+            </div>
+            <p class="gaps__hint">
+              We flag material gaps across domain, start date, seniority, and language so you can answer them in your own words.
+            </p>
+            <ul class="gaps__list">
+              <li
+                v-for="g in gapQuestions"
+                :key="g.id"
+                class="gaps__item"
+                :data-test="`gap-question-${g.id}`"
+              >
+                <span class="gaps__category font-mono">{{ g.category }}</span>
+                <p class="gaps__text">{{ g.question }}</p>
+                <div class="gaps__actions">
+                  <q-btn unelevated color="primary" no-caps dense label="Confirm" @click="onConfirmGap(g)" />
+                  <q-btn outline no-caps dense label="Not applicable" @click="onSkipGap(g)" />
+                </div>
+              </li>
+              <li v-if="!gapQuestions.length" class="gaps__empty">
+                No material gaps flagged for this draft.
+              </li>
+            </ul>
+          </section>
         </div>
       </div>
 
@@ -263,6 +320,101 @@ interface DiffSeg { kind: 'same' | 'add' | 'del'; text: string }
 
 const baseText = computed<string>(() => store.currentCv?.parsedText ?? '');
 
+/** Job recipient context for the cover-letter heading (TAILOR-007 / AC1):
+ *  the letter must visibly target the JD's role + company so the user — and
+ *  any reader — can see who/what the draft is tailored to. */
+const jobRecord = computed(() => store.jobs.find((j) => j.sourceId === sourceId.value) ?? null);
+const jobTitle = computed<string>(() => jobRecord.value?.title ?? '');
+const jobCompany = computed<string>(() => jobRecord.value?.company ?? '');
+
+/** Letter content as a writable computed (TAILOR-007 / AC2). Edits flow
+ *  back into the cached doc so Copy + Export-as-text + Export-Markdown all
+ *  read the latest in-place edit (FR-004 / FR-015). The renderer cache is
+ *  the source of truth for an edit session; the underlying persisted draft
+ *  is only refreshed on Regenerate / Accept. */
+const letterContent = computed<string>({
+  get(): string {
+    return doc.value?.content ?? '';
+  },
+  set(next: string) {
+    if (!sourceId.value || !doc.value) return;
+    const key = `${sourceId.value}::cover-letter`;
+    store.tailoredDocs[key] = { ...doc.value, content: next };
+  },
+});
+
+/** Material-gap categories the cover-letter tab surfaces as questions
+ *  (FR-011 / AC3). The four canonical buckets are domain, start date,
+ *  seniority, and language — each gap question is keyed by category so the
+ *  user answers in their own words rather than the model silently
+ *  justifying or papering over the mismatch. */
+interface CoverLetterGapQuestion {
+  id: string;
+  category: 'Domain' | 'Start date' | 'Seniority' | 'Language';
+  question: string;
+}
+
+const GAP_CATEGORY_PATTERNS: Array<{ category: CoverLetterGapQuestion['category']; pattern: RegExp }> = [
+  { category: 'Domain', pattern: /\b(domain|industry|sector|vertical)\b/i },
+  { category: 'Start date', pattern: /\b(start[\s-]?date|notice|availability|available|start\s+by)\b/i },
+  { category: 'Seniority', pattern: /\b(seniority|senior|junior|lead|staff|principal|level|years?\s+of\s+experience|yoe)\b/i },
+  { category: 'Language', pattern: /\b(language|fluent|fluency|english|bilingual|native\s+speaker|written\s+and\s+spoken)\b/i },
+];
+
+function classifyGapCategory(text: string): CoverLetterGapQuestion['category'] | null {
+  for (const { category, pattern } of GAP_CATEGORY_PATTERNS) {
+    if (pattern.test(text)) return category;
+  }
+  return null;
+}
+
+/**
+ * Filter the cached draft's suggestions for ones that read as material
+ * gaps and convert them into user-facing questions. We do not invent
+ * questions — if the model surfaced no gap-shaped suggestion for a
+ * category, that category is simply absent (NFR-001 / AC4: never
+ * fabricate). The renderer also draws on the CV-tab's cached draft so the
+ * cover-letter inherits the same grounded gap evidence the CV side
+ * surfaced.
+ */
+const answeredGapIds = ref<Set<string>>(new Set());
+
+const gapQuestions = computed<CoverLetterGapQuestion[]>(() => {
+  if (!sourceId.value) return [];
+  const seen = new Set<string>();
+  const out: CoverLetterGapQuestion[] = [];
+  const drafts = [
+    store.getTailoredDocCached(sourceId.value, 'cover-letter'),
+    store.getTailoredDocCached(sourceId.value, 'cv'),
+  ];
+  for (const draft of drafts) {
+    if (!draft) continue;
+    for (const s of draft.suggestions) {
+      const haystack = `${s.type ?? ''} ${s.text ?? ''} ${s.rationale ?? ''}`;
+      const looksLikeGap = /gap|missing|cannot\s+find|no\s+evidence|cannot\s+verify|unclear/i.test(haystack);
+      const category = classifyGapCategory(haystack);
+      if (!category && !looksLikeGap) continue;
+      const resolved: CoverLetterGapQuestion['category'] = category ?? 'Domain';
+      const id = `${draft.kind}-${s.id}`;
+      if (seen.has(id) || answeredGapIds.value.has(id)) continue;
+      seen.add(id);
+      out.push({
+        id,
+        category: resolved,
+        question: s.text || s.rationale || `Can you confirm your experience with ${s.type || 'this requirement'}?`,
+      });
+    }
+  }
+  return out;
+});
+
+function onConfirmGap(g: CoverLetterGapQuestion): void {
+  answeredGapIds.value.add(g.id);
+}
+function onSkipGap(g: CoverLetterGapQuestion): void {
+  answeredGapIds.value.add(g.id);
+}
+
 /**
  * Token-level diff so each edit on the tailored content is visible against
  * the base CV (FR-003). Cheap LCS over whitespace-split tokens — good enough
@@ -381,6 +533,26 @@ async function copy(): Promise<void> {
   }
 }
 
+/**
+ * Plain-text export (TAILOR-007 / AC5 / FR-015) — reads the in-renderer
+ * edited content directly so the file matches exactly what's on screen.
+ * No round-trip through main, no submission path; the user copies / saves
+ * the resulting .txt and pastes it wherever they need to.
+ */
+function onExportText(): void {
+  if (!doc.value) return;
+  const fname = jobCompany.value
+    ? `cover-letter-${jobCompany.value.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.txt`
+    : 'cover-letter.txt';
+  const blob = new Blob([doc.value.content ?? ''], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fname;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 async function onExport(): Promise<void> {
   if (!sourceId.value) return;
   const result = await store.exportTailoredDoc({
@@ -474,6 +646,39 @@ pre.cv__text { font-family: inherit; margin: 0; }
 
 .letter { font-size: 13px; line-height: 1.75; color: #3a3733; padding: 28px 32px; }
 .letter__body { font-family: inherit; white-space: pre-wrap; margin: 0; }
+.letter__to {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 14px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--hair);
+}
+.letter__to-label { font-size: 11px; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
+.letter__to-title { font-size: 14px; font-weight: 700; color: var(--text-2); }
+.letter__to-sep { color: var(--muted); }
+.letter__to-company { font-size: 13.5px; font-weight: 600; color: var(--olive-text); }
+.letter__editor {
+  width: 100%; min-height: 320px; resize: vertical;
+  font: inherit; line-height: 1.7; color: #3a3733;
+  background: #fff; border: 1px solid var(--hair); border-radius: 6px;
+  padding: 14px 16px; outline: none;
+  &:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+}
+
+.gaps {
+  margin-top: 20px; border-top: 1px solid var(--hair); padding-top: 14px;
+  display: flex; flex-direction: column; gap: 10px;
+  &__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+  &__title { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--text-2); }
+  &__sub { font-size: 11.5px; color: var(--muted); }
+  &__hint { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  &__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  &__item { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+    border: 1px solid var(--hair); border-radius: 8px; background: var(--rail); }
+  &__category { font-size: 10.5px; letter-spacing: .08em; color: var(--accent-hover);
+    background: var(--accent-tint); padding: 3px 7px; border-radius: 5px; align-self: flex-start;
+    text-transform: uppercase; }
+  &__text { margin: 0; font-size: 12.5px; color: #3a3733; line-height: 1.5; }
+  &__actions { display: flex; gap: 7px; }
+  &__empty { font-size: 12px; color: var(--muted); padding: 8px 4px; }
+}
 
 .dock {
   width: 340px; flex-shrink: 0; border-left: 1px solid var(--hair); background: var(--rail);
