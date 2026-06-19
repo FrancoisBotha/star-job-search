@@ -300,11 +300,14 @@ const showAbout = ref(false);
 .lbl { margin-bottom: 9px; }
 .lbl:not(:first-child) { margin-top: 18px; }
 
-.key-status { display: flex; gap: 9px; margin-bottom: 9px; }
+.key-status { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
 .key-row { display: flex; gap: 9px; margin-bottom: 7px; align-items: center; }
-.key-row__input { flex: 1; }
-.key-box { flex: 1; display: flex; align-items: center; gap: 10px; height: 44px; background: var(--rail); border: 1px solid var(--input-border); border-radius: 9px; padding: 0 13px; }
-.key-box__val { font-size: 13px; color: #3a3530; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-row__input { flex: 1; min-width: 0; }
+// LLM-009 — `min-width: 0` lets the key-box shrink under flex so a long
+// masked value truncates with ellipsis instead of pushing the row wider
+// than the API-key entry row below it.
+.key-box { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; height: 44px; background: var(--rail); border: 1px solid var(--input-border); border-radius: 9px; padding: 0 13px; }
+.key-box__val { flex: 1; min-width: 0; font-size: 13px; color: #3a3530; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hint { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
 .link { color: var(--accent); }
 .field { margin-bottom: 4px; }
