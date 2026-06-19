@@ -3,7 +3,8 @@
  * Opens the app in a frameless 1320×880 window — the design's native size —
  * with its own in-app title bar and window controls (see MainLayout.vue).
  */
-import { app, BrowserWindow, Menu, ipcMain, safeStorage, shell, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, Menu, ipcMain, safeStorage, shell, type WebContents } from 'electron';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createJobBrowser, JOB_BROWSER_PARTITION } from './browser-surface';
@@ -19,6 +20,11 @@ import { startMcpBrowserServer, type RunningMcpBrowserServer } from './mcp-brows
 import { createJobsStore } from './jobs';
 import { buildDefaultExtractor, registerExtractionIpc } from './extraction';
 import { registerShellIpc } from './shell';
+import { compileTailoredDocToPdf } from './pdfExport';
+import {
+  createInMemoryPdfExportRecordsStore,
+  registerPdfExportIpc,
+} from './pdfExportIpc';
 import { createMatchScoresStore } from './matchScores';
 import { createMatchReviewsStore } from './matchReviews';
 import { buildMatchReviewLlm } from './matchReview';
@@ -417,6 +423,30 @@ function createWindow() {
       return built.llm;
     },
     rescore: (sourceId: string) => scoringRunner.rescoreOne(sourceId),
+  });
+
+  // Wire the PDF-export IPC (PDFEX-004 / Epic 8 §7). Compiles the persisted
+  // TailoredDoc via the bundled LaTeX engine (PDFEX-002), opens a native save
+  // dialog, writes the PDF locally, and records provenance. Star performs NO
+  // submission — it only writes a local file (FR-008). The compile function
+  // is the PDFEX-002 entry point; dialog + shell + writeFile are passed in so
+  // the IPC module stays free of direct Electron coupling and is unit-testable.
+  const pdfExportRecords = createInMemoryPdfExportRecordsStore();
+  registerPdfExportIpc(ipcMain, {
+    docsStore: tailoredDocsStore,
+    jobsStore,
+    recordsStore: pdfExportRecords,
+    compile: (input, opts) => compileTailoredDocToPdf(input, opts),
+    dialog: {
+      showSaveDialog: (opts) =>
+        mainWindow
+          ? dialog.showSaveDialog(mainWindow, opts)
+          : dialog.showSaveDialog(opts),
+    },
+    shell: {
+      showItemInFolder: (fullPath: string) => shell.showItemInFolder(fullPath),
+    },
+    writeFile: (filePath: string, data: Buffer) => writeFile(filePath, data),
   });
 
   // Wire the external-shell IPC (JOBDET-001). Opens http/https URLs in the

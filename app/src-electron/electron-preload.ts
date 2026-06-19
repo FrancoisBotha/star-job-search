@@ -244,6 +244,23 @@ contextBridge.exposeInMainWorld('starTailor', {
   export: (input: TailorDocSelector) => ipcRenderer.invoke('tailor:export', input),
 });
 
+// PDF-export bridge (PDFEX-004 / Epic 8). `export` compiles the persisted
+// TailoredDoc via the bundled LaTeX engine (PDFEX-002), opens a native save
+// dialog, writes the PDF locally — Star performs NO submission — and records
+// provenance per PdfExportRecord (FR-007 / FR-008). `reveal` calls
+// shell.showItemInFolder on the saved path. Both return a tagged-union
+// result with stable error codes (NO_DOC / COMPILE_ERROR / TOOLCHAIN_MISSING /
+// IO_ERROR) so the renderer can branch without parsing exception messages.
+interface PdfExportOptsInput {
+  pageSize?: 'letter' | 'a4';
+}
+
+contextBridge.exposeInMainWorld('starPdf', {
+  export: (tailoredDocId: string, opts?: PdfExportOptsInput) =>
+    ipcRenderer.invoke('pdf:export', { tailoredDocId, opts }),
+  reveal: (fullPath: string) => ipcRenderer.invoke('pdf:reveal', fullPath),
+});
+
 // External shell bridge (JOBDET-001). Opens http/https URLs in the user's OS
 // default browser. Distinct from `starBoard.open` (which navigates the
 // embedded Discover browser via `view:open`). The main-process handler

@@ -522,6 +522,51 @@ interface StarFileApi {
   getPathForFile: (file: File) => string;
 }
 
+/** Stable failure codes returned by pdf:* IPC channels (PDFEX-004 / Epic 8 §7).
+ *  Mirrors `PdfExportErrorCode` in src-electron/pdfExportIpc.ts. */
+type StarPdfErrorCode =
+  | 'NO_DOC'
+  | 'COMPILE_ERROR'
+  | 'TOOLCHAIN_MISSING'
+  | 'IO_ERROR';
+
+type StarPdfPageSize = 'letter' | 'a4';
+
+interface StarPdfExportOpts {
+  pageSize?: StarPdfPageSize;
+}
+
+/** Provenance record for one successful PDF export (Epic 8 §7).
+ *  Pins the saved file to the exact tailored-doc version, the model that
+ *  generated it, the timestamp, and the page size selected. */
+interface StarPdfExportRecord {
+  id: string;
+  tailoredDocId: string;
+  tailoredDocVersion: number;
+  modelSlug: string;
+  exportedAt: number;
+  savedPath: string;
+  pageSize: StarPdfPageSize;
+}
+
+type StarPdfExportResult =
+  | { ok: true; record: StarPdfExportRecord }
+  | { ok: false; code: StarPdfErrorCode; error: string };
+
+/** Bridge exposed by src-electron/electron-preload.ts for PDF export
+ *  (PDFEX-004 / Epic 8). `export` compiles the persisted TailoredDoc via the
+ *  bundled LaTeX engine, opens a native save dialog with a role/company
+ *  default filename, writes the PDF locally (no submission — FR-008), and
+ *  records provenance. `reveal` calls shell.showItemInFolder on the saved
+ *  path. */
+interface StarPdfApi {
+  export: (
+    tailoredDocId: string,
+    opts?: StarPdfExportOpts,
+  ) => Promise<StarPdfExportResult>;
+  reveal: (fullPath: string) => Promise<void>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
@@ -539,4 +584,5 @@ interface Window {
   starScores?: StarScoresApi;
   starReview?: StarReviewApi;
   starTailor?: StarTailorApi;
+  starPdf?: StarPdfApi;
 }
