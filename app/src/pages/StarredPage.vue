@@ -46,6 +46,16 @@
         <footer class="tile__actions">
           <q-btn unelevated color="primary" no-caps class="col-grow" label="Open" @click="store.openJob(j.url)" />
           <q-btn
+            unelevated
+            no-caps
+            color="secondary"
+            class="generate"
+            label="Generate"
+            :disable="!tailoringAvailable"
+            :title="tailorDisabledReason ?? 'Generate a tailored CV + cover letter for this job'"
+            @click="openTailor(j.sourceId)"
+          />
+          <q-btn
             outline
             no-caps
             class="dismiss"
@@ -60,11 +70,38 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import { useAppStore } from 'src/stores/app-store';
 import StarRating from 'src/components/StarRating.vue';
 import type { JobRecord, MatchScore } from 'src/types/models';
 
 const store = useAppStore();
+const router = useRouter();
+
+/**
+ * TAILOR-006 AC1/AC2 — the Generate button deep-links to the Tailor view
+ * (a named route, NOT a sidebar item) and is disabled with a clear reason
+ * when the OpenRouter key or a default model is missing.
+ */
+const hasDefaultModel = computed<boolean>(() =>
+  store.preferredModels.some((m) => m.isDefault),
+);
+const tailoringAvailable = computed<boolean>(
+  () => store.isTailoringAvailable && hasDefaultModel.value,
+);
+const tailorDisabledReason = computed<string | null>(() => {
+  if (!store.isTailoringAvailable) {
+    return 'Add an OpenRouter API key in Settings to enable tailoring.';
+  }
+  if (!hasDefaultModel.value) {
+    return 'Choose a default model in Settings to enable tailoring.';
+  }
+  return null;
+});
+
+function openTailor(sourceId: string): void {
+  void router.push({ name: 'tailor', query: { sourceId } });
+}
 
 const STRONG_STARS = 4;
 function isStrong(score: MatchScore | undefined): boolean {
@@ -96,6 +133,8 @@ function subtitle(j: JobRecord): string {
 onMounted(async () => {
   await store.listJobs();
   await store.listScores();
+  await store.hydrateApiKeyStatus();
+  await store.hydratePreferredModels();
 });
 </script>
 
@@ -143,4 +182,5 @@ onMounted(async () => {
 }
 .col-grow { flex: 1; }
 .dismiss { color: var(--muted); border-color: var(--border-strong); }
+.generate { color: var(--accent-hover); background: var(--accent-tint); }
 </style>
