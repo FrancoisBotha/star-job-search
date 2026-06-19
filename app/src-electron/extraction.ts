@@ -13,6 +13,8 @@
  *                      `{ ok: true, summary }` or `{ ok: false, error }`.
  *   board:list       — list job postings, optional status filter.
  *   board:setStatus  — flip a job posting's status (Saved / Applied / Hidden).
+ *   board:deleteAll  — wipe every imported job (EXTR-012); cascades to
+ *                      match_scores + match_reviews via deps.deleteRelated.
  *   view:open        — navigate the visible (Discover) browser to a URL.
  *
  * Progress events stream to the renderer via `extract:progress`.
@@ -73,6 +75,13 @@ export interface ExtractionRuntimeDeps {
   buildExtractor: (input: BuildExtractorInput) => Promise<BuiltExtractor>;
   /** Forward a progress event to the renderer (e.g. via webContents.send('extract:progress', e)). */
   emitProgress: (e: ProgressEvent) => void;
+  /**
+   * Cascade hook (EXTR-012 AC4). Invoked by the `board:deleteAll` handler
+   * after the jobs table is wiped so per-job related rows (match_scores,
+   * match_reviews) can be cleared too. Optional — when omitted the handler
+   * still wipes the jobs table on its own.
+   */
+  deleteRelated?: () => void;
 }
 
 const FUNCTION_CALLING_HINTS = /(tool|function[- ]calling|function call|does not support|tools? are not supported|no tools)/i;
@@ -159,6 +168,15 @@ export function registerExtractionIpc(
       return { ok: true };
     },
   );
+
+  // EXTR-012 — wipe every imported job. Cascades to per-job derived rows
+  // (match_scores / match_reviews) via the optional `deleteRelated` hook so
+  // no orphaned data lingers after a "delete all" from the board UI.
+  ipcMain.handle('board:deleteAll', async () => {
+    const deleted = deps.store.deleteAll();
+    deps.deleteRelated?.();
+    return { ok: true, deleted };
+  });
 
   ipcMain.handle('view:open', async (_event, url: string) => {
     if (typeof url !== 'string' || !url) {

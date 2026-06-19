@@ -164,6 +164,9 @@ contextBridge.exposeInMainWorld('starBoard', {
   setStatus: (input: { sourceId: string; status: string }) =>
     ipcRenderer.invoke('board:setStatus', input),
   open: (url: string) => ipcRenderer.invoke('view:open', url),
+  // EXTR-012: wipe every imported job (cascades to match_scores +
+  // match_reviews in main). Returns `{ ok: true, deleted }`.
+  deleteAll: () => ipcRenderer.invoke('board:deleteAll'),
 });
 
 // Scoring bridge (SCORE-004 / Epic 5). `get`/`list` read the persisted

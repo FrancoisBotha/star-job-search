@@ -752,6 +752,23 @@ export const useAppStore = defineStore('app', {
       }
     },
     /**
+     * Wipe every imported job from the board (EXTR-012). Calls
+     * `board:deleteAll` in main — which cascades the wipe to match_scores +
+     * match_reviews so no orphaned per-job rows remain — and resets the
+     * renderer caches in lockstep so visible/strong/top-match/starred
+     * selectors all reflect the empty board immediately. No-ops gracefully
+     * when the preload bridge is absent (browser SPA build).
+     */
+    async deleteAllJobs() {
+      const bridge = typeof window !== 'undefined' ? window.starBoard : undefined;
+      if (!bridge) return;
+      await bridge.deleteAll();
+      this.jobs = [];
+      this.scores = {};
+      this.reviews = {};
+      this.reviewStates = {};
+    },
+    /**
      * Flip every currently-hidden job back to `new` (EXTR-009 AC3). Mirrors
      * the Starred page's "Restore N hidden" affordance — used after a user
      * has marked one or more postings `not_interested` and wants them back

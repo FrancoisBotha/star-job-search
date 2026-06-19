@@ -49,6 +49,9 @@ export interface MatchScoresStore {
   /** Mark one or more sourceIds as stale WITHOUT deleting the stored score
    *  (FR-005 / AC5). A re-score later replaces the row via `upsert`. */
   markStale(sourceIds: string | string[]): void;
+  /** Wipe every row (EXTR-012 AC4) — cascaded from the Job Board's
+   *  "delete all imported jobs" action so no orphaned per-job scores remain. */
+  deleteAll(): void;
 }
 
 const CREATE_TABLE_SQL = `
@@ -145,6 +148,11 @@ export function createMatchScoresStore(
     markStale(sourceIds: string | string[]): void {
       const ids = Array.isArray(sourceIds) ? sourceIds : [sourceIds];
       for (const id of ids) markStaleStmt.run(id);
+    },
+    deleteAll(): void {
+      // Lazy-prepared so existing test fakes that don't know the DELETE
+      // statement keep working when they never call deleteAll.
+      db.prepare('DELETE FROM match_scores').run();
     },
   };
 }

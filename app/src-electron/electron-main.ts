@@ -301,6 +301,13 @@ function createWindow() {
       const def = models.find((m) => m.isDefault);
       return def?.slug ?? null;
     },
+    // EXTR-012 AC4: when the renderer triggers "delete all imported jobs",
+    // also wipe every per-job derived row so no orphaned scores / reviews
+    // remain to surface in the renderer caches or on the next restart.
+    deleteRelated: () => {
+      matchScoresStore.deleteAll();
+      matchReviewsStore.deleteAll();
+    },
     buildExtractor: (input) =>
       buildDefaultExtractor({
         ...input,

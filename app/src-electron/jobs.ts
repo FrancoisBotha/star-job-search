@@ -56,6 +56,13 @@ export interface JobsStore {
   upsertJobs(jobs: JobRecord[]): number;
   listJobs(filter?: ListJobsFilter): JobRecord[];
   setStatus(sourceId: string, status: string): void;
+  /**
+   * Wipe every persisted job row (EXTR-012 AC2 / AC6). Returns the count of
+   * rows removed. `site_profiles` are intentionally left intact — cached
+   * per-host layout knowledge is independent of the imported job board, and
+   * is expensive to relearn on the next AI Extract run.
+   */
+  deleteAll(): number;
   getSiteProfile(hostname: string): SiteProfile | undefined;
   saveSiteProfile(profile: SiteProfile): void;
 }
@@ -247,6 +254,14 @@ export function createJobsStore(db: JobsDatabaseLike): JobsStore {
     },
     setStatus(sourceId: string, status: string): void {
       setStatusStmt.run(status, sourceId);
+    },
+    deleteAll(): number {
+      // Lazy-prepared so test fakes that only know the create/insert/select
+      // SQL keep working when they never exercise the deleteAll path.
+      const result = db.prepare('DELETE FROM jobs').run() as
+        | { changes?: number }
+        | undefined;
+      return result?.changes ?? 0;
     },
     getSiteProfile(hostname: string): SiteProfile | undefined {
       const rows = (getProfileStmt.all?.(hostname) ?? []) as SiteProfileRow[];

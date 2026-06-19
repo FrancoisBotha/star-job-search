@@ -68,6 +68,9 @@ export interface MatchReviewsStore {
    *  narrative blob (AC4). A regenerate later replaces the row via `upsert`,
    *  which also clears the stale flag. */
   markStale(sourceId: string): void;
+  /** Wipe every row (EXTR-012 AC4) — cascaded from the Job Board's
+   *  "delete all imported jobs" action so no orphaned per-job reviews remain. */
+  deleteAll(): void;
 }
 
 // No score / percent / stars / rating column by construction (Epic 6 hard
@@ -175,6 +178,11 @@ export function createMatchReviewsStore(
     },
     markStale(sourceId: string): void {
       markStaleStmt.run(sourceId);
+    },
+    deleteAll(): void {
+      // Lazy-prepared so existing test fakes that don't know the DELETE
+      // statement keep working when they never call deleteAll.
+      db.prepare('DELETE FROM match_reviews').run();
     },
   };
 }

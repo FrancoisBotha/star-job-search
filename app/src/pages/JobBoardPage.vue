@@ -5,15 +5,53 @@
         <h1 class="page-title">Job Board</h1>
         <p class="sub">Every job extracted across your tracked boards. Star the ones worth a closer look.</p>
       </div>
-      <q-btn
-        v-if="store.notInterestedCount > 0"
-        outline
-        no-caps
-        class="restore-btn"
-        :label="`Restore ${store.notInterestedCount} hidden`"
-        @click="store.restoreNotInterested()"
-      />
+      <div class="head__actions">
+        <q-btn
+          v-if="store.notInterestedCount > 0"
+          outline
+          no-caps
+          class="restore-btn"
+          :label="`Restore ${store.notInterestedCount} hidden`"
+          @click="store.restoreNotInterested()"
+        />
+        <!-- EXTR-012: destructive "delete all imported jobs" affordance.
+             Disabled when the board is already empty so the user can never
+             trigger a confirm against a no-op. -->
+        <q-btn
+          flat
+          round
+          dense
+          icon="mdi-delete-sweep-outline"
+          class="delete-all-btn"
+          aria-label="Delete all imported jobs"
+          title="Delete all imported jobs"
+          :disable="store.jobs.length === 0"
+          @click="confirmDeleteAll = true"
+        />
+      </div>
     </div>
+
+    <q-dialog v-model="confirmDeleteAll" persistent>
+      <q-card class="confirm">
+        <div class="confirm__title font-serif">Delete all imported jobs?</div>
+        <p class="confirm__body">
+          This permanently removes every imported job, along with their match
+          scores and AI reviews. The next AI Extract run will re-import jobs
+          from scratch. This cannot be undone.
+        </p>
+        <div class="confirm__actions">
+          <q-btn v-close-popup flat no-caps label="Cancel" />
+          <q-btn
+            v-close-popup
+            unelevated
+            color="negative"
+            no-caps
+            label="Delete all"
+            @click="deleteAll"
+          />
+        </div>
+      </q-card>
+    </q-dialog>
 
     <div v-if="store.visibleJobs.length === 0" class="empty">
       <div class="font-serif empty__title">No imported jobs yet</div>
@@ -104,6 +142,11 @@ const store = useAppStore();
 const detailOpen = ref(false);
 const selectedJob = ref<JobRecord | null>(null);
 const focusReview = ref(false);
+const confirmDeleteAll = ref(false);
+
+async function deleteAll() {
+  await store.deleteAllJobs();
+}
 
 /**
  * Strong-match threshold (Epic 5 §3) — a score reads as a "match" when its
@@ -168,6 +211,13 @@ onMounted(async () => {
 .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
 .sub { margin: 7px 0 0; font-size: 14px; color: var(--text-3); }
 .restore-btn { color: var(--text-2); border-color: var(--border-strong); }
+.head__actions { display: flex; align-items: center; gap: 8px; }
+.delete-all-btn { color: var(--muted); &:hover { color: var(--negative, #c0392b); } }
+
+.confirm { padding: 28px 30px; max-width: 460px; }
+.confirm__title { font-size: 20px; }
+.confirm__body { font-size: 14px; color: var(--text-3); margin: 12px 0 18px; line-height: 1.45; }
+.confirm__actions { display: flex; justify-content: flex-end; gap: 8px; }
 
 .empty { border: 1.5px dashed var(--border-strong); border-radius: 14px; padding: 54px; text-align: center; margin-bottom: 16px; }
 .empty__title { font-size: 22px; color: var(--text-3); }

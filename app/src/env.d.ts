@@ -271,6 +271,9 @@ interface StarBoardApi {
   list: (filter?: StarBoardListFilter) => Promise<StarBoardJob[]>;
   setStatus: (input: { sourceId: string; status: string }) => Promise<{ ok: true }>;
   open: (url: string) => Promise<{ ok: true }>;
+  /** Wipe every imported job (EXTR-012). Cascades to match_scores +
+   *  match_reviews in main so no orphaned per-job rows remain. */
+  deleteAll: () => Promise<{ ok: true; deleted: number }>;
 }
 
 /** Result returned by the shell:openExternal IPC channel (JOBDET-001). */
