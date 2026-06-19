@@ -337,7 +337,10 @@ describe('discover (AC2)', () => {
     });
     await extractor.run({ searchUrl: 'https://example.com/jobs' });
 
-    expect(llm.calls.filter((c) => c.schema === 'SelectorSet')).toHaveLength(1);
+    // EXTR-014 AC4: when the first enumerate finds nothing the relearn
+    // fallback fires once even for freshly-learned (non-cached) selectors,
+    // so the initial discovery + one relearn = 2 SelectorSet LLM calls.
+    expect(llm.calls.filter((c) => c.schema === 'SelectorSet')).toHaveLength(2);
     const cached = data.profiles.get('example.com');
     expect(cached).toBeDefined();
     expect(cached!.selectors).toMatchObject({

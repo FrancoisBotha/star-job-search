@@ -65,6 +65,20 @@ export interface BrowserSurface {
   getText(selector?: string): Promise<string>;
   click(selector: string): Promise<void>;
   getOuterHtml?(selector?: string): Promise<string>;
+  /** EXTR-014: resolve once the navigated page has FINISHED loading
+   *  (`did-finish-load` / `did-stop-loading` / `document.readyState === 'complete'`).
+   *  Optional so the test-doubles and old MCP-only surfaces still satisfy
+   *  the contract; when absent the extractor proceeds without an explicit
+   *  load barrier. */
+  waitForReady?(): Promise<void>;
+  /** EXTR-014: poll for the given selector until at least one matching
+   *  element exists or the timeout elapses, returning `true` if found. Used
+   *  to give JS-rendered listing boards (Seek, Indeed, …) time to populate
+   *  their job cards before enumeration. */
+  waitForSelector?(
+    selector: string,
+    opts?: { timeoutMs?: number },
+  ): Promise<boolean>;
 }
 
 export interface StructuredLlm {
@@ -260,6 +274,18 @@ export function createJobExtractor(deps: JobExtractorDeps): {
 
   async function initNode(state: ExtractorState): Promise<Partial<ExtractorState>> {
     await browser.navigate(state.searchUrl);
+    // EXTR-014 AC2: wait for the navigated page to FINISH loading before we
+    // capture HTML for selector-learning or attempt enumeration. Otherwise a
+    // mid-load DOM sample reaches the LLM and the run reports "no listings"
+    // even when jobs are present on the rendered page.
+    if (browser.waitForReady) {
+      try {
+        await browser.waitForReady();
+      } catch {
+        // A readiness wait failure should NOT abort the run — a fully-loaded
+        // page may have raced through readiness before the listener attached.
+      }
+    }
     await throttle();
     let hostname = '';
     try {
@@ -337,6 +363,19 @@ ${(sample ?? '').slice(0, 12000)}`,
 
   async function enumerateNode(state: ExtractorState): Promise<Partial<ExtractorState>> {
     const sel = state.selectors!;
+    // EXTR-014 AC3: SPA boards (Seek, Indeed) render their job cards via
+    // client-side JS after `did-finish-load` fires. Poll until at least one
+    // card matches the selector — or the timeout elapses — so the enumerate
+    // step doesn't snapshot a still-loading DOM and conclude zero listings.
+    if (browser.waitForSelector) {
+      try {
+        await browser.waitForSelector(sel.cardSelector);
+      } catch {
+        // Treat a polling error as "page never settled" — fall through to
+        // queryAll which will report zero and let routeAfterEnumerate decide
+        // whether to relearn.
+      }
+    }
     const rows = await browser.queryAll({
       selector: sel.cardSelector,
       linkSelector: sel.linkSelector,
@@ -375,14 +414,12 @@ ${(sample ?? '').slice(0, 12000)}`,
   }
 
   function routeAfterEnumerate(state: ExtractorState): 'paginate' | 'dedup' | 'relearn' {
-    // Cached selectors found nothing on the first page → re-learn the layout
-    // once from the page we're actually on, then re-enumerate.
-    if (
-      state.lastAdded === 0 &&
-      state.page === 1 &&
-      state.profileFromCache &&
-      !state.relearned
-    ) {
+    // EXTR-014 AC4: when enumerate finds nothing on the first page, retry
+    // selector-learning ONCE before concluding "no listings". This protects
+    // against both stale cached selectors AND a freshly-learned selector
+    // sample drawn from a still-rendering DOM — a single bad sample can't
+    // end the run in a false zero.
+    if (state.lastAdded === 0 && state.page === 1 && !state.relearned) {
       return 'relearn';
     }
     const next = state.selectors?.nextSelector;

@@ -251,6 +251,69 @@ export function createWebContentsBrowserSurface(wc: WebContents): BrowserSurface
       const html = (await wc.executeJavaScript(code)) as string;
       return String(html ?? '');
     },
+    // EXTR-014 AC2: resolve once the navigated page has FINISHED loading
+    // (`did-finish-load` / `did-stop-loading` / `document.readyState === 'complete'`).
+    // Captures the "already-loaded" case (the listener attaches late and we
+    // resolve immediately) and the "stuck on load" case (a 5s safety cap).
+    async waitForReady(): Promise<void> {
+      try {
+        const readyState = (await wc.executeJavaScript(
+          `document.readyState`,
+        )) as string;
+        if (readyState === 'complete') return;
+      } catch {
+        /* page may not yet have a usable JS context — fall through to events */
+      }
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          try {
+            wc.removeListener('did-finish-load', done);
+            wc.removeListener('did-stop-loading', done);
+          } catch {
+            /* listener may already be detached */
+          }
+          clearTimeout(timer);
+          resolve();
+        };
+        try {
+          wc.once('did-finish-load', done);
+          wc.once('did-stop-loading', done);
+        } catch {
+          done();
+          return;
+        }
+        const timer = setTimeout(done, 5_000);
+      });
+    },
+    // EXTR-014 AC3: SPA boards (Seek, Indeed) render listing cards after
+    // `did-finish-load` fires. Poll `document.querySelector(selector)` until
+    // a match exists or the timeout elapses.
+    async waitForSelector(
+      selector: string,
+      opts?: { timeoutMs?: number },
+    ): Promise<boolean> {
+      const sel = JSON.stringify(selector);
+      const deadline = Date.now() + Math.max(0, opts?.timeoutMs ?? 4_000);
+      const intervalMs = 150;
+      // First sample is immediate so a fast-rendering page doesn't pay the
+      // first interval as latency.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        try {
+          const found = (await wc.executeJavaScript(
+            `!!document.querySelector(${sel})`,
+          )) as boolean;
+          if (found) return true;
+        } catch {
+          /* page may have navigated underneath us — keep polling */
+        }
+        if (Date.now() >= deadline) return false;
+        await new Promise<void>((r) => setTimeout(r, intervalMs));
+      }
+    },
   };
 }
 
