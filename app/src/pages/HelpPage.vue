@@ -102,6 +102,27 @@
         </div>
       </div>
 
+      <!-- AI Match Review -->
+      <h2 class="section-title sec">AI Match Review</h2>
+      <p class="lead">
+        The <strong>AI Match Review</strong> is an on-demand, LLM-powered qualitative read of a
+        single job against your CV and Profile — a requirement-by-requirement narrative covering
+        what matches, what's missing, your strongest proof points and the keywords to mirror.
+        It is <strong>advisory</strong> and sits <strong>alongside</strong> the deterministic
+        star rating — never replaces it. The review <strong>emits no number, score or star</strong>;
+        the deterministic 1–5 stars remain the authoritative rating, and they stay completely
+        separate from the AI narrative.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in reviewSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- FAQ -->
       <h2 class="section-title sec">Frequently asked</h2>
       <div class="card card--rows">
@@ -265,6 +286,33 @@ const scoringSteps = [
   {
     title: 'Why scores stay stable when OpenRouter is down',
     body: 'Scoring is deterministic and lives entirely in the app — it makes no model call. Even with no OpenRouter key configured and no internet connection, every job on your board still gets a star rating and a percentage match, and the same inputs always produce the same answer.',
+  },
+];
+
+const reviewSteps = [
+  {
+    title: 'Open a job and generate the review',
+    body: 'Open any job from the board to bring up the Job-detail modal. The AI Match Review section sits beneath the deterministic star breakdown — when no review is cached, it shows a Generate review button. Press it to produce a one-off narrative read of this specific job against your CV and Profile.',
+  },
+  {
+    title: 'Requires an OpenRouter key and a default model',
+    body: 'The review is an LLM feature, so it needs a saved OpenRouter key plus a selected default model under Settings → LLM integration. Without them, Generate review is disabled and Star explains exactly what is missing — no key, or no default model — and links you to where to set it.',
+  },
+  {
+    title: 'One-time "what is sent" disclosure on first send',
+    body: 'The first time you generate a review, Star shows a one-time disclosure of exactly what is sent and to which provider: the job description text plus your CV text and Profile, going only to OpenRouter (the same sanctioned egress used for AI Extract and CV structuring — this feature opens no new egress). The review only proceeds once you accept it.',
+  },
+  {
+    title: 'Read the narrative — and only the narrative',
+    body: 'The result is structured words, never a number: a short fit summary, a requirement-by-requirement mapping with the matching CV/profile evidence (or "not found" — never invented), gaps classified as blocker or nice-to-have with a concrete mitigation each, your strongest proof points and ATS keywords to mirror. The section is badged AI · advisory with provenance ("AI review · {model} · {date}") so it is visually distinct from the deterministic stars.',
+  },
+  {
+    title: 'Stale reviews and regenerate',
+    body: 'Reviews are cached per job and survive restart, so opening the same job later shows the same narrative. When you edit your CV or Profile, or the job is re-extracted, Star marks the cached review may be out of date and offers Regenerate — which runs a fresh structured call against the current inputs. Regenerate is always available, even on a fresh review.',
+  },
+  {
+    title: 'Error states by code',
+    body: 'If the OpenRouter key is missing, Star shows a no-key message that points to Settings → LLM integration instead of attempting the call. If the model returns an error or the network fails, you see a model error with a Retry. If the chosen default model is not function-calling capable (the structured output the review needs), Star shows a model-not-capable message and asks you to pick a different default — the deterministic stars are unaffected either way.',
   },
 ];
 
