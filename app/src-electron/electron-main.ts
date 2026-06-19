@@ -23,6 +23,13 @@ import { createMatchScoresStore } from './matchScores';
 import { createMatchReviewsStore } from './matchReviews';
 import { buildMatchReviewLlm } from './matchReview';
 import { markAllReviewsStale, registerReviewIpc } from './reviewIpc';
+import { createTailoredDocsStore } from './tailoredDocs';
+import { buildTailorLlm } from './tailor';
+import {
+  markAllTailoredDocsStale,
+  markTailoredDocStale,
+  registerTailorIpc,
+} from './tailorIpc';
 import {
   createScoringRunner,
   isScoringRelevantProfileChange,
@@ -124,6 +131,13 @@ function createWindow() {
   // column by construction (Epic 6 hard boundary / NFR-001).
   const matchReviewsStore = createMatchReviewsStore(sitesDb);
 
+  // Wire the persisted tailored-docs store (TAILOR-003 / Epic 7 FR-016).
+  // Reuses the shared star.db handle; the store creates its own
+  // `tailored_docs` table on first run. Drafts (CV + cover letter) per job
+  // survive an app restart and are flagged stale (not deleted) when the
+  // underlying CV/Profile changes or the job is re-extracted.
+  const tailoredDocsStore = createTailoredDocsStore(sitesDb);
+
   // Wire the persisted jobs store (EXTR-003). Created here (earlier than its
   // historical position) so the mark-stale review hooks below have a stable
   // handle to enumerate known sourceIds with.
@@ -151,6 +165,10 @@ function createWindow() {
       // cached review stale so the UI offers a "regenerate" — the narrative
       // blob is preserved alongside it.
       markAllReviewsStale(matchReviewsStore, jobsStore);
+      // TAILOR-004 / FR-016: a Profile change can shift the tailoring brief
+      // (skills, target role). Flip every cached tailored draft stale so the
+      // UI offers a regenerate; the prior draft is preserved.
+      markAllTailoredDocsStale(tailoredDocsStore, jobsStore);
       return next;
     },
   };
@@ -172,6 +190,9 @@ function createWindow() {
     upload: async (input) => {
       const rec = await cvStore.upload(input);
       markAllReviewsStale(matchReviewsStore, jobsStore);
+      // TAILOR-004 / FR-016: a new CV version invalidates the per-job tailored
+      // drafts (they were grounded in a prior CV). Flag stale; preserve content.
+      markAllTailoredDocsStale(tailoredDocsStore, jobsStore);
       return rec;
     },
     list: (profileId) => cvStore.list(profileId),
@@ -181,6 +202,8 @@ function createWindow() {
     clear: async (profileId) => {
       const result = await cvStore.clear(profileId);
       markAllReviewsStale(matchReviewsStore, jobsStore);
+      // TAILOR-004 / FR-016: clearing the CV invalidates every cached draft.
+      markAllTailoredDocsStale(tailoredDocsStore, jobsStore);
       return result;
     },
   };
@@ -332,6 +355,16 @@ function createWindow() {
         } catch {
           // Best-effort: a stale-marking failure must never abort the extract.
         }
+        // TAILOR-004 / FR-016: a re-extracted JD invalidates each affected
+        // job's tailored drafts. Flag stale; preserve content for the UI to
+        // surface alongside the regenerate affordance.
+        try {
+          for (const id of Array.from(jobsStore.knownSourceIds())) {
+            markTailoredDocStale(tailoredDocsStore, id);
+          }
+        } catch {
+          // Best-effort: never abort the extract on a stale-marking failure.
+        }
       }
     },
   });
@@ -354,6 +387,36 @@ function createWindow() {
       return def?.slug ?? null;
     },
     buildLlm: ({ apiKey, model }) => buildMatchReviewLlm({ apiKey, model }),
+  });
+
+  // Wire the Tailor IPC (TAILOR-004 / Epic 7 §8). Reuses the Epic 2 key +
+  // default model, the JD (Epic 3 jobs), CV text + structured fields +
+  // Profile (Epic 4), and the cached Epic 6 review when present. The accept
+  // path delegates score recomputation to the SAME deterministic Epic 5
+  // scoring runner used by the rest of the app — tailoring NEVER calls the
+  // LLM to score (FR-012 / NFR-002 hard boundary) and never writes
+  // match_scores directly.
+  registerTailorIpc(ipcMain, {
+    store: tailoredDocsStore,
+    jobsStore,
+    cvStore: cvStoreWithReviewStaleHook,
+    reviewsStore: matchReviewsStore,
+    getProfile: () => profileStore.get(),
+    getApiKey: () => apiKeyStore.getRawKey(),
+    getDefaultModel: () => {
+      const models = preferredModelsStore.list();
+      const def = models.find((m) => m.isDefault);
+      return def?.slug ?? null;
+    },
+    buildLlm: async ({ apiKey, model }) => {
+      const built = await buildTailorLlm({ apiKey, model });
+      if (!built.ok) {
+        const err = built as unknown as { error: string };
+        throw new Error(err.error);
+      }
+      return built.llm;
+    },
+    rescore: (sourceId: string) => scoringRunner.rescoreOne(sourceId),
   });
 
   // Wire the external-shell IPC (JOBDET-001). Opens http/https URLs in the

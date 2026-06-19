@@ -210,6 +210,40 @@ contextBridge.exposeInMainWorld('starReview', {
   get: (sourceId: string) => ipcRenderer.invoke('review:get', sourceId),
 });
 
+// Tailor bridge (TAILOR-004 / Epic 7 §8). `generate` runs the single
+// structured-output tailoring call (CV or cover letter) against OpenRouter
+// (Epic 2 key + default model) over the JD + the user's CV/Profile + the
+// cached Epic 6 review (when present), runs the deterministic ATS check
+// alongside, persists via `tailored_docs`, and returns the draft. `get`
+// returns the cached draft with its stale flag (or null). `accept` removes
+// one suggestion from the draft and triggers an Epic 5 deterministic rescore
+// (NOT the LLM). `export` returns the draft as text/Markdown for copy/export.
+// All return a tagged-union result `{ ok: true, ... }` or `{ ok: false, code,
+// error }` with a stable error code (NO_API_KEY / NO_DEFAULT_MODEL / NO_CV /
+// JOB_NOT_FOUND / DRAFT_NOT_FOUND / SUGGESTION_NOT_FOUND / MODEL_NOT_CAPABLE
+// / RATE_LIMITED / NETWORK_ERROR / LLM_ERROR / SCHEMA_ERROR).
+interface TailorGenerateInput {
+  sourceId: string;
+  kind?: 'cv' | 'cover-letter';
+  intensity?: 'light' | 'aggressive';
+}
+interface TailorDocSelector {
+  sourceId: string;
+  kind: 'cv' | 'cover-letter';
+}
+interface TailorAcceptInput {
+  sourceId: string;
+  kind: 'cv' | 'cover-letter';
+  suggestionId: string;
+}
+
+contextBridge.exposeInMainWorld('starTailor', {
+  generate: (input: TailorGenerateInput) => ipcRenderer.invoke('tailor:generate', input),
+  get: (input: TailorDocSelector) => ipcRenderer.invoke('tailor:get', input),
+  accept: (input: TailorAcceptInput) => ipcRenderer.invoke('tailor:accept', input),
+  export: (input: TailorDocSelector) => ipcRenderer.invoke('tailor:export', input),
+});
+
 // External shell bridge (JOBDET-001). Opens http/https URLs in the user's OS
 // default browser. Distinct from `starBoard.open` (which navigates the
 // embedded Discover browser via `view:open`). The main-process handler

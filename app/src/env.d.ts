@@ -412,6 +412,106 @@ interface StarReviewApi {
   get: (sourceId: string) => Promise<StarMatchReview | null>;
 }
 
+/** Renderer-side mirror of a TAILOR-003 persisted TailoredSuggestion. */
+interface StarTailoredSuggestion {
+  id: string;
+  type: string;
+  gain: number;
+  text: string;
+  rationale?: string;
+}
+
+/** Renderer-side mirror of the persisted TAILOR-003 ATS report. */
+interface StarTailoredAtsReport {
+  score: number;
+  missingKeywords: string[];
+  checks?: Array<{ rule: string; passed: boolean; detail?: string }>;
+}
+
+/** Renderer-side mirror of a persisted TailoredDoc (TAILOR-003 / Epic 7 §7).
+ *  Narrative + ATS only — there is NO score / star / percentage field anywhere
+ *  in this shape (NFR-002 hard boundary; numeric ratings stay in Epic 5
+ *  match_scores). */
+type StarTailoredDocKind = 'cv' | 'cover-letter';
+type StarTailorIntensity = 'light' | 'aggressive';
+interface StarTailoredDoc {
+  sourceId: string;
+  kind: StarTailoredDocKind;
+  content: string;
+  suggestions: StarTailoredSuggestion[];
+  atsReport: StarTailoredAtsReport;
+  keywords: string[];
+  intensity: StarTailorIntensity;
+  baseCvId: string;
+  modelSlug: string;
+  generatedAt: number;
+  /** True when the cached draft may be out of date (CV / Profile changed or
+   *  the job was re-extracted since generation). The content is still
+   *  viewable; a regenerate is offered alongside. */
+  stale: boolean;
+}
+
+/** Stable failure codes returned by tailor:* IPC channels (TAILOR-004).
+ *  Mirrors `TailorErrorCode` in src-electron/tailorIpc.ts. */
+type StarTailorErrorCode =
+  | 'NO_API_KEY'
+  | 'NO_DEFAULT_MODEL'
+  | 'NO_CV'
+  | 'JOB_NOT_FOUND'
+  | 'DRAFT_NOT_FOUND'
+  | 'SUGGESTION_NOT_FOUND'
+  | 'MODEL_NOT_CAPABLE'
+  | 'RATE_LIMITED'
+  | 'NETWORK_ERROR'
+  | 'LLM_ERROR'
+  | 'SCHEMA_ERROR';
+
+interface StarTailorGenerateInput {
+  sourceId: string;
+  kind?: StarTailoredDocKind;
+  intensity?: StarTailorIntensity;
+}
+interface StarTailorDocSelector {
+  sourceId: string;
+  kind: StarTailoredDocKind;
+}
+interface StarTailorAcceptInput {
+  sourceId: string;
+  kind: StarTailoredDocKind;
+  suggestionId: string;
+}
+
+type StarTailorGenerateResult =
+  | { ok: true; doc: StarTailoredDoc }
+  | { ok: false; code: StarTailorErrorCode; error: string };
+
+type StarTailorAcceptResult =
+  | { ok: true; doc: StarTailoredDoc; scored: number }
+  | { ok: false; code: StarTailorErrorCode; error: string };
+
+type StarTailorExportResult =
+  | {
+      ok: true;
+      format: 'markdown';
+      mimeType: 'text/markdown';
+      content: string;
+      filename: string;
+    }
+  | { ok: false; code: StarTailorErrorCode; error: string };
+
+/** Bridge exposed by src-electron/electron-preload.ts for tailoring
+ *  (TAILOR-004 / Epic 7 §8). `generate` runs the structured-output tailoring
+ *  call and persists the draft; `get` reads the cached draft; `accept` removes
+ *  a suggestion and triggers an Epic 5 deterministic rescore (NOT the LLM);
+ *  `export` returns the draft as text/Markdown — there is no submission
+ *  path (FR-015). */
+interface StarTailorApi {
+  generate: (input: StarTailorGenerateInput) => Promise<StarTailorGenerateResult>;
+  get: (input: StarTailorDocSelector) => Promise<StarTailoredDoc | null>;
+  accept: (input: StarTailorAcceptInput) => Promise<StarTailorAcceptResult>;
+  export: (input: StarTailorDocSelector) => Promise<StarTailorExportResult>;
+}
+
 /** Bridge exposed by src-electron/electron-preload.ts (CVPROF-011). Resolves
  *  a picked/dropped File object to its absolute filesystem path via Electron's
  *  `webUtils.getPathForFile` — a contextIsolation-safe replacement for the
@@ -438,4 +538,5 @@ interface Window {
   starShell?: StarShellApi;
   starScores?: StarScoresApi;
   starReview?: StarReviewApi;
+  starTailor?: StarTailorApi;
 }
