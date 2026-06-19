@@ -1,0 +1,84 @@
+[
+  {
+    "id": "SITEUSR-001",
+    "title": "Add optional username to Site persistence + sites:setUsername IPC/bridge/types + store action",
+    "status": "backlog",
+    "assignee": null,
+    "epic_ref": "docs/BDD Use Cases/bdd_SITE_USERNAME.md",
+    "references": {
+      "prd": "docs/Product Requirements Document/PRD.md",
+      "architecture": "docs/Architecture/Architecture.md",
+      "bdd": "docs/BDD Use Cases/bdd_SITE_USERNAME.md"
+    },
+    "acceptance_criteria": [
+      "[ ] The Site entity in app/src-electron/sites.ts gains an optional `username` field (string, defaults empty/null); CREATE TABLE adds a `username` column and existing databases are migrated additively (ALTER TABLE ... ADD COLUMN guarded) so old data still loads",
+      "[ ] A `sites:setUsername` IPC handler persists the username for a given site id; list/add continue to return the username on each Site row",
+      "[ ] The preload bridge (StarSitesApi) exposes `setUsername(id, username)` and the StarSite type in app/src/env.d.ts carries the new `username` field",
+      "[ ] A `setSiteUsername(id, username)` action exists on the Pinia app-store, calls the bridge, and mirrors the value into local state",
+      "[ ] Only a username is stored — no password field is added anywhere",
+      "[ ] Saved username survives an app restart (persisted to SQLite, not just store state)"
+    ],
+    "dependencies": [],
+    "notes": "Extends the existing BRWSR-002 sites store. Keep migration additive — do not drop/recreate the table. Scope: persistence + wiring only; UI lives in SITEUSR-002/003."
+  },
+  {
+    "id": "SITEUSR-002",
+    "title": "Add per-site username input to the Settings Job-sites list, wired to save & persist",
+    "status": "backlog",
+    "assignee": null,
+    "epic_ref": "docs/BDD Use Cases/bdd_SITE_USERNAME.md",
+    "references": {
+      "prd": "docs/Product Requirements Document/PRD.md",
+      "architecture": "docs/Architecture/Architecture.md",
+      "bdd": "docs/BDD Use Cases/bdd_SITE_USERNAME.md"
+    },
+    "acceptance_criteria": [
+      "[ ] Each row in the Settings Job-sites list (SettingsPage.vue) shows an editable free-text username field alongside the existing host/enabled/remove controls",
+      "[ ] Entering a username and saving calls store.setSiteUsername and the saved value is shown next to that site (Scenario 1)",
+      "[ ] The field is optional — a site with no username renders an empty/placeholder input and saves nothing harmful",
+      "[ ] The saved username re-appears after navigating away and back, and after an app restart (via hydrateSites)"
+    ],
+    "dependencies": ["SITEUSR-001"],
+    "notes": "UI-only ticket against SettingsPage.vue. Reuse the existing .site row layout and store actions; no password field."
+  },
+  {
+    "id": "SITEUSR-003",
+    "title": "Show saved username + silent copy button alongside the active Discover tab (none when unset)",
+    "status": "backlog",
+    "assignee": null,
+    "epic_ref": "docs/BDD Use Cases/bdd_SITE_USERNAME.md",
+    "references": {
+      "prd": "docs/Product Requirements Document/PRD.md",
+      "architecture": "docs/Architecture/Architecture.md",
+      "bdd": "docs/BDD Use Cases/bdd_SITE_USERNAME.md"
+    },
+    "acceptance_criteria": [
+      "[ ] When the active Discover tab's site has a saved username, the username is displayed alongside the embedded browser for that tab (Scenario 2)",
+      "[ ] A copy button is shown next to the displayed username and copies the username to the clipboard with no confirmation message (silent) (Scenario 2)",
+      "[ ] When the active tab's site has no saved username, no username and no copy button are displayed (Scenario 3)",
+      "[ ] The displayed username tracks the selected tab — switching tabs updates (or hides) it to match the newly active site"
+    ],
+    "dependencies": ["SITEUSR-001"],
+    "notes": "UI-only ticket against DiscoverPage.vue. Display surface is the embedded-browser chrome/tab area for the matching site only. Copy is silent (no toast). Depends only on SITEUSR-001, independent of SITEUSR-002."
+  },
+  {
+    "id": "SITEUSR-004",
+    "title": "Evaluate BDD UC scenarios end-to-end",
+    "status": "backlog",
+    "assignee": null,
+    "epic_ref": "docs/BDD Use Cases/bdd_SITE_USERNAME.md",
+    "references": {
+      "prd": "docs/Product Requirements Document/PRD.md",
+      "architecture": "docs/Architecture/Architecture.md",
+      "bdd": "docs/BDD Use Cases/bdd_SITE_USERNAME.md"
+    },
+    "acceptance_criteria": [
+      "[ ] Walk every acceptance scenario in bdd_SITE_USERNAME.md against the actual implementation",
+      "[ ] For each scenario, verify Given/When/Then behaviour matches exactly; flag deviations",
+      "[ ] Add an end-to-end test covering at least the happy path (save username in Settings, see it + copy it in Discover) in the project's existing test suite (no new test framework)",
+      "[ ] If any scenario fails, raise a new ticket with the failure repro rather than silently fixing in this one"
+    ],
+    "dependencies": ["SITEUSR-001", "SITEUSR-002", "SITEUSR-003"],
+    "notes": "This is the safety net before the BDD UC's Status flips to DONE. Stricter than per-ticket auto-eval — verify against scenarios, not just per-ticket criteria."
+  }
+]
