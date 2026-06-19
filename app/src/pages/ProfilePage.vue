@@ -16,7 +16,17 @@
               <div class="cv-card__name">{{ store.currentCv.fileName }}</div>
               <div class="cv-card__sub">Uploaded {{ formatUploadedAt(store.currentCv.uploadedAt) }} · {{ parseStatusLabel }}</div>
             </div>
-            <q-btn outline no-caps class="ghost" label="Replace" @click="openPicker" />
+            <div class="cv-card__actions">
+              <q-btn outline no-caps class="ghost" label="Replace" @click="openPicker" />
+              <q-btn
+                outline
+                no-caps
+                class="ghost cv-card__clear"
+                label="Clear"
+                :disable="isUploadBusy"
+                @click="openClearConfirm"
+              />
+            </div>
           </div>
           <div v-else class="cv-card">
             <span class="cv-card__icon">
@@ -137,6 +147,30 @@
             <q-btn outline no-caps class="ghost" label="Re-scan with new profile" @click="markScoresStale" />
           </div>
           <div v-if="store.scoresStale" class="stale font-mono">Existing scores are marked stale.</div>
+
+          <!-- CVPROF-014 AC6: confirm guard for the destructive Clear action.
+               Wrapped in q-dialog so the user has an explicit confirm step
+               before the CV row + on-disk binary are removed. -->
+          <q-dialog v-model="showClearConfirm">
+            <q-card class="confirm">
+              <div class="confirm__title">Clear your CV?</div>
+              <p class="confirm__body">
+                This deletes the stored CV file and resets the parsed profile
+                fields derived from it. AI match reviews will be marked stale.
+              </p>
+              <div class="confirm__actions">
+                <q-btn v-close-popup flat no-caps label="Cancel" />
+                <q-btn
+                  unelevated
+                  no-caps
+                  color="negative"
+                  label="Clear CV"
+                  :loading="isClearing"
+                  @click="confirmClear"
+                />
+              </div>
+            </q-card>
+          </q-dialog>
         </div>
 
         <!-- right rail -->
@@ -185,6 +219,8 @@ const store = useAppStore();
 const fileInput = ref<HTMLInputElement | null>(null);
 const uploadMessage = ref<string | null>(null);
 const isDragover = ref(false);
+const showClearConfirm = ref(false);
+const isClearing = ref(false);
 
 const PROFILE_FIELD_LABELS: Record<string, string> = {
   targetRole: 'a target role',
@@ -353,6 +389,21 @@ function saveCurrent() {
 function markScoresStale() {
   store.scoresStale = true;
 }
+
+function openClearConfirm() {
+  uploadMessage.value = null;
+  showClearConfirm.value = true;
+}
+
+async function confirmClear() {
+  isClearing.value = true;
+  try {
+    await store.clearCv();
+  } finally {
+    isClearing.value = false;
+    showClearConfirm.value = false;
+  }
+}
 </script>
 
 <style scoped lang="scss">
@@ -363,6 +414,11 @@ function markScoresStale() {
 .lbl { margin-bottom: 11px; }
 
 .cv-card { border: 1px solid var(--hair); border-radius: 12px; padding: 16px; background: #fff; display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.cv-card__actions { display: flex; gap: 8px; }
+.confirm { padding: 22px 24px; max-width: 420px; }
+.confirm__title { font: 600 16px/1.3 var(--font-ui); margin-bottom: 10px; }
+.confirm__body { font-size: 13px; color: var(--text-2); margin: 0 0 18px; }
+.confirm__actions { display: flex; justify-content: flex-end; gap: 8px; }
 .cv-card__icon { width: 44px; height: 52px; border-radius: 7px; background: var(--accent-tint); border: 1px solid var(--input-border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .cv-card__meta { flex: 1; min-width: 0; }
 .cv-card__name { font-size: 14px; font-weight: 600; }

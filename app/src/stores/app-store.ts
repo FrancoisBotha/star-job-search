@@ -865,6 +865,26 @@ export const useAppStore = defineStore('app', {
       return this.uploadCv(input);
     },
     /**
+     * Clear every persisted CV for the profile via `cv:clear` (CVPROF-014).
+     * Deletes the DB rows AND unlinks the on-disk binaries on the main
+     * side. Resets renderer state so the Profile CV card reactively returns
+     * to its "No CV uploaded yet" empty state: `currentCv = null`, `cvs`
+     * emptied, `cvParseStatus` back to `idle`, and `cvParseError` cleared.
+     *
+     * Main's wrapper around the CV store flips every cached AI Match
+     * Review stale — consistent with the upload path's hook (AC5).
+     */
+    async clearCv(): Promise<StarCvClearResult | null> {
+      const bridge = typeof window !== 'undefined' ? window.starCv : undefined;
+      if (!bridge) return null;
+      const result = await bridge.clear();
+      this.currentCv = null;
+      this.cvs = [];
+      this.cvParseStatus = 'idle';
+      this.cvParseError = null;
+      return result;
+    },
+    /**
      * Fetch a specific CV version by id via `cv:get`. Returns null when
      * the bridge is absent or the row doesn't exist; the caller decides
      * whether that's an error or a soft miss.

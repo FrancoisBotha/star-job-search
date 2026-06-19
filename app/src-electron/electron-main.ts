@@ -176,6 +176,13 @@ function createWindow() {
     },
     list: (profileId) => cvStore.list(profileId),
     get: (id) => cvStore.get(id),
+    // CVPROF-014: clearing the CV invalidates every cached review for the
+    // same reason an upload does — the JD-vs-CV narrative is now stale.
+    clear: async (profileId) => {
+      const result = await cvStore.clear(profileId);
+      markAllReviewsStale(matchReviewsStore, jobsStore);
+      return result;
+    },
   };
   registerCvIpc(ipcMain, cvStoreWithReviewStaleHook);
 

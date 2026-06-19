@@ -91,6 +91,10 @@ contextBridge.exposeInMainWorld('starCv', {
   upload: (input: CvUploadInput) => ipcRenderer.invoke('cv:upload', input),
   list: (profileId?: string) => ipcRenderer.invoke('cv:list', profileId),
   get: (id: string) => ipcRenderer.invoke('cv:get', id),
+  // CVPROF-014: delete every CV row + on-disk binary for the profile and
+  // return { removedRows, removedFiles } so the renderer can surface
+  // partial cleanup if the file is already missing.
+  clear: (profileId?: string) => ipcRenderer.invoke('cv:clear', profileId),
 });
 
 // OpenRouter API key bridge (LLM-001). The raw key never crosses this

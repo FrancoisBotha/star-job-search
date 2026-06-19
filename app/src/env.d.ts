@@ -94,10 +94,17 @@ interface StarCvUploadInput {
 }
 
 /** Bridge exposed by src-electron/electron-preload.ts for versioned CVs (CVPROF-003). */
+/** Result of cv:clear — counts of rows deleted and on-disk files unlinked. */
+interface StarCvClearResult {
+  removedRows: number;
+  removedFiles: number;
+}
+
 interface StarCvApi {
   upload: (input: StarCvUploadInput) => Promise<StarCv>;
   list: (profileId?: string) => Promise<StarCv[]>;
   get: (id: string) => Promise<StarCv | null>;
+  clear: (profileId?: string) => Promise<StarCvClearResult>;
 }
 
 /** Masked status payload returned by the apiKey:* IPC channels (LLM-001). */

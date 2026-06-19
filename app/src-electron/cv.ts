@@ -15,7 +15,7 @@
  *   cv:upload | cv:list | cv:get
  */
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, stat } from 'node:fs/promises';
+import { copyFile, mkdir, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import type { IpcMain } from 'electron';
@@ -73,10 +73,17 @@ export interface CvDatabaseLike {
   };
 }
 
+/** Outcome of clearing every CV for a profile (CVPROF-014). */
+export interface ClearCvResult {
+  removedRows: number;
+  removedFiles: number;
+}
+
 export interface CvStore {
   upload(input: UploadCvInput): Promise<CvRecord>;
   list(profileId?: string): CvRecord[];
   get(id: string): CvRecord | null;
+  clear(profileId?: string): Promise<ClearCvResult>;
 }
 
 export const MAX_CV_BYTES = 10 * 1024 * 1024;
@@ -171,6 +178,16 @@ export function createCvStore(db: CvDatabaseLike, opts: CvStoreOptions): CvStore
   const maxVersionStmt = db.prepare(
     'SELECT MAX(version) AS max_version FROM cv WHERE profile_id = ?',
   );
+  // Prepared lazily so existing test fakes that pre-date CVPROF-014 still
+  // recognise the SQL surface they were written against — only the new
+  // clear path needs the DELETE statement.
+  let deleteByProfileStmt: { run(...args: unknown[]): unknown } | null = null;
+  const ensureDeleteStmt = () => {
+    if (!deleteByProfileStmt) {
+      deleteByProfileStmt = db.prepare('DELETE FROM cv WHERE profile_id = ?');
+    }
+    return deleteByProfileStmt;
+  };
 
   function nextVersion(profileId: string): number {
     const rows = (maxVersionStmt.all?.(profileId) ?? []) as Array<{
@@ -260,6 +277,33 @@ export function createCvStore(db: CvDatabaseLike, opts: CvStoreOptions): CvStore
       const row = rows[0];
       return row ? rowToRecord(row) : null;
     },
+
+    /**
+     * Remove every CV row for the profile AND unlink each row's on-disk
+     * binary (CVPROF-014). Unlink failures are tolerated row-by-row so an
+     * already-missing file doesn't leave the DB row behind, but the count
+     * of *successfully* removed files is returned so the caller can
+     * surface partial cleanup.
+     */
+    async clear(profileId: string = DEFAULT_PROFILE_ID): Promise<ClearCvResult> {
+      const rows = (listByProfileStmt.all?.(profileId) ?? []) as CvRow[];
+      let removedFiles = 0;
+      for (const row of rows) {
+        const abs = path.resolve(opts.storageRoot, row.storage_path);
+        try {
+          await unlink(abs);
+          removedFiles += 1;
+        } catch {
+          // best-effort — a missing file is not a hard failure (the
+          // user could have deleted it manually); we still clear the row.
+        }
+      }
+      const res = ensureDeleteStmt().run(profileId) as { changes?: number };
+      return {
+        removedRows: typeof res?.changes === 'number' ? res.changes : rows.length,
+        removedFiles,
+      };
+    },
   };
 }
 
@@ -282,4 +326,7 @@ export function registerCvIpc(ipcMain: IpcMain, store: CvStore): void {
   ipcMain.handle('cv:upload', async (_event, input: UploadCvInput) => store.upload(input));
   ipcMain.handle('cv:list', async (_event, profileId?: string) => store.list(profileId));
   ipcMain.handle('cv:get', async (_event, id: string) => store.get(id));
+  ipcMain.handle('cv:clear', async (_event, profileId?: string) =>
+    store.clear(profileId),
+  );
 }
