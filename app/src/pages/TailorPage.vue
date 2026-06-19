@@ -46,7 +46,76 @@
           @click="onExportText"
         />
         <q-btn unelevated color="primary" no-caps label="Export Markdown" :disable="!doc" @click="onExport" />
+
+        <!-- Page-size choice for PDF export (PDFEX-005 / AC3). Defaults
+             by locale: en-US → Letter, everywhere else → A4. Reuses the
+             same `segmented` Studio chrome as the tab + intensity
+             switches so no new design tokens are introduced (AC6). -->
+        <div class="segmented" role="group" aria-label="PDF page size">
+          <button
+            class="seg"
+            :class="{ 'is-active': pdfPageSize === 'letter' }"
+            data-test="pdf-page-size-letter"
+            @click="pdfPageSize = 'letter'"
+          >Letter</button>
+          <button
+            class="seg"
+            :class="{ 'is-active': pdfPageSize === 'a4' }"
+            data-test="pdf-page-size-a4"
+            @click="pdfPageSize = 'a4'"
+          >A4</button>
+        </div>
+
+        <!-- Export PDF — visible on both CV and Cover-letter tabs
+             (AC1). Disabled until a tailored doc exists (AC2). -->
+        <q-btn
+          unelevated color="primary" no-caps
+          label="Export PDF"
+          data-test="export-pdf"
+          :disable="!doc"
+          :loading="isExportingPdf"
+          @click="onExportPdf"
+        />
       </div>
+    </div>
+
+    <!-- PDF export progress / error / success banners (AC3 / AC4 / AC5).
+         Compile state shows a banner while the bundled LaTeX engine runs;
+         on error we surface a stable-code-driven message + Try-again; on
+         success the last record's provenance is pinned under the bar so
+         the user always sees what was exported and when. -->
+    <div
+      v-if="isExportingPdf"
+      class="banner banner--stale"
+      data-test="pdf-exporting"
+    >
+      <q-spinner color="primary" size="14px" />
+      <span class="banner__text">Compiling PDF…</span>
+    </div>
+
+    <div
+      v-if="pdfExportState.status === 'error'"
+      class="banner banner--error"
+      data-test="pdf-export-error"
+    >
+      <span class="banner__text">{{ pdfErrorCopy }}</span>
+      <q-btn flat dense no-caps color="primary" label="Try again" @click="onExportPdf" />
+    </div>
+
+    <div
+      v-if="lastPdfRecord"
+      class="banner banner--stale"
+      data-test="pdf-export-provenance"
+    >
+      <span class="banner__text">
+        exported from CV v{{ lastPdfRecord.tailoredDocVersion }} ·
+        {{ formatExportDate(lastPdfRecord.exportedAt) }} ·
+        {{ lastPdfRecord.pageSize === 'letter' ? 'Letter' : 'A4' }}
+      </span>
+      <q-btn
+        flat dense no-caps color="primary" label="Reveal in folder"
+        @click="onRevealLastPdf"
+      />
     </div>
 
     <!-- Stale banner (FR-016) + Regenerate. -->
@@ -224,6 +293,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import { useQuasar } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from 'src/stores/app-store';
 import StarRating from 'src/components/StarRating.vue';
@@ -234,6 +304,7 @@ type StarTailorIntensity = 'light' | 'aggressive';
 const router = useRouter();
 const route = useRoute();
 const store = useAppStore();
+const $q = useQuasar();
 
 /**
  * Deep-link source (AC1): the Tailor view keeps a named route and reads
@@ -567,6 +638,92 @@ async function onExport(): Promise<void> {
   a.download = result.filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/**
+ * PDF export wiring (PDFEX-005 / Epic 8 §6).
+ *
+ * Letter is the default for en-US locales (US Letter is the practical
+ * default page size in the United States); every other locale defaults to
+ * A4. The user can flip this per export with the Letter/A4 toggle in the
+ * bar (AC3).
+ */
+type PdfPageSize = 'letter' | 'a4';
+
+function defaultPageSizeForLocale(): PdfPageSize {
+  const lang = (typeof navigator !== 'undefined' && navigator.language) || '';
+  return lang.toLowerCase().startsWith('en-us') ? 'letter' : 'a4';
+}
+
+const pdfPageSize = ref<PdfPageSize>(defaultPageSizeForLocale());
+
+const pdfExportState = computed(() =>
+  sourceId.value
+    ? store.pdfExportStateFor(sourceId.value)
+    : { status: 'idle' as const, code: null, message: null },
+);
+
+const isExportingPdf = computed<boolean>(
+  () => pdfExportState.value.status === 'loading',
+);
+
+const lastPdfRecord = computed(() =>
+  sourceId.value ? store.pdfExportRecordFor(sourceId.value) : null,
+);
+
+const pdfErrorCopy = computed<string>(() => {
+  const code = pdfExportState.value.code;
+  switch (code) {
+    case 'NO_DOC':
+      return 'No tailored draft to export — generate one first.';
+    case 'TOOLCHAIN_MISSING':
+      return 'The bundled LaTeX engine was not found. Reinstall the app to restore PDF export.';
+    case 'COMPILE_ERROR':
+      return pdfExportState.value.message
+        ? `PDF compile failed: ${pdfExportState.value.message}`
+        : 'PDF compile failed. Check the draft for unsupported characters and try again.';
+    case 'IO_ERROR':
+      return pdfExportState.value.message ?? 'Could not write the PDF to disk.';
+    default:
+      return pdfExportState.value.message ?? 'PDF export failed.';
+  }
+});
+
+function formatExportDate(epochMs: number): string {
+  return new Date(epochMs).toISOString().slice(0, 10);
+}
+
+async function onExportPdf(): Promise<void> {
+  if (!sourceId.value || !doc.value) return;
+  const result = await store.exportPdf({
+    sourceId: sourceId.value,
+    pageSize: pdfPageSize.value,
+  });
+  if (!result) return;
+  if (result.ok) {
+    const savedPath = result.record.savedPath;
+    $q.notify({
+      type: 'positive',
+      message: 'PDF exported',
+      caption: savedPath,
+      timeout: 6000,
+      actions: [
+        {
+          label: 'Reveal in folder',
+          color: 'white',
+          handler: () => {
+            void store.revealPdfExport(savedPath);
+          },
+        },
+      ],
+    });
+  }
+}
+
+async function onRevealLastPdf(): Promise<void> {
+  const rec = lastPdfRecord.value;
+  if (!rec) return;
+  await store.revealPdfExport(rec.savedPath);
 }
 
 onMounted(async () => {

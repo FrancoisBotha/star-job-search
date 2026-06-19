@@ -84,6 +84,28 @@ const IDLE_TAILOR_STATE: TailorActionState = {
 };
 
 /**
+ * Per-sourceId PDF export action state (PDFEX-005 / Epic 8 §6). The Tailor
+ * view drives the bundled-LaTeX compile + native save dialog via
+ * [[exportPdf]]; this state tracks idle → loading (compiling) → success /
+ * error with the stable [[StarPdfErrorCode]] (NO_DOC / COMPILE_ERROR /
+ * TOOLCHAIN_MISSING / IO_ERROR) so the UI renders specific copy + a
+ * targeted retry without parsing exception text (AC4 / NFR-004).
+ */
+export interface PdfExportActionState {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  code: StarPdfErrorCode | null;
+  message: string | null;
+}
+
+const IDLE_PDF_EXPORT_STATE: PdfExportActionState = {
+  status: 'idle',
+  code: null,
+  message: null,
+};
+
+export type PdfExportRecord = StarPdfExportRecord;
+
+/**
  * Composite key for the tailored-docs map. Keying by both `sourceId` and
  * `kind` is required because a single job can have both a tailored CV and
  * a tailored cover letter cached in parallel — both are valid drafts at
@@ -332,6 +354,18 @@ interface AppState {
    * exception text (FR-014 / NFR-004).
    */
   tailorStates: Record<string, TailorActionState>;
+  /**
+   * Per-sourceId PDF export action state (PDFEX-005). Keyed by `sourceId` —
+   * one export at a time per job since a single `pdf:export` IPC bundles the
+   * CV draft + cover letter into a single saved file.
+   */
+  pdfExportStates: Record<string, PdfExportActionState>;
+  /**
+   * Most-recent successful PdfExportRecord per sourceId (PDFEX-005 / AC5).
+   * Drives the "exported from CV v{n} · {date}" provenance line on the
+   * Tailor view.
+   */
+  pdfExportRecords: Record<string, PdfExportRecord>;
 }
 
 export const useAppStore = defineStore('app', {
@@ -373,6 +407,8 @@ export const useAppStore = defineStore('app', {
     reviewDisclosureAcknowledged: false,
     tailoredDocs: {},
     tailorStates: {},
+    pdfExportStates: {},
+    pdfExportRecords: {},
   }),
 
   getters: {
@@ -577,6 +613,23 @@ export const useAppStore = defineStore('app', {
      * defence-in-depth gate, not the only one.
      */
     isTailoringAvailable: (state): boolean => state.apiKeyStatus.present,
+    /**
+     * Per-sourceId PDF export action state lookup (PDFEX-005 / AC4).
+     * Always returns a defined snapshot so the Tailor view can render
+     * without nullish guards — defaults to the shared `idle` constant.
+     */
+    pdfExportStateFor:
+      (state) =>
+      (sourceId: string): PdfExportActionState =>
+        state.pdfExportStates[sourceId] ?? IDLE_PDF_EXPORT_STATE,
+    /**
+     * Most-recent successful PdfExportRecord for a sourceId (PDFEX-005 /
+     * AC5). Returns `null` when no successful export is cached.
+     */
+    pdfExportRecordFor:
+      (state) =>
+      (sourceId: string): PdfExportRecord | null =>
+        state.pdfExportRecords[sourceId] ?? null,
   },
 
   actions: {
@@ -1425,6 +1478,64 @@ export const useAppStore = defineStore('app', {
         const doc = this.tailoredDocs[key];
         if (doc) this.tailoredDocs[key] = { ...doc, stale: true };
       }
+    },
+    /**
+     * Export the tailored draft for a job as PDF via the bundled-LaTeX
+     * engine (PDFEX-005 / Epic 8 §6). Drives `window.starPdf.export`,
+     * which compiles + opens the native save dialog + writes the PDF
+     * locally + records provenance. The tagged-union result is mapped
+     * onto the per-sourceId [[PdfExportActionState]] so the UI can branch
+     * on `status` (idle / loading / success / error) and on the stable
+     * `code` (NO_DOC / COMPILE_ERROR / TOOLCHAIN_MISSING / IO_ERROR)
+     * without parsing exception text.
+     *
+     * On success the returned record is cached on
+     * [[pdfExportRecords]] so the Tailor view can render the
+     * "exported from CV v{n} · {date}" provenance line (AC5).
+     *
+     * Returns `undefined` when the bridge is absent — non-Electron builds
+     * have no PDF export path.
+     */
+    async exportPdf(input: {
+      sourceId: string;
+      pageSize: StarPdfPageSize;
+    }): Promise<StarPdfExportResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starPdf : undefined;
+      if (!bridge) return undefined;
+      this.pdfExportStates[input.sourceId] = {
+        status: 'loading',
+        code: null,
+        message: null,
+      };
+      const result = await bridge.export(input.sourceId, {
+        pageSize: input.pageSize,
+      });
+      if (result.ok) {
+        this.pdfExportRecords[input.sourceId] = result.record;
+        this.pdfExportStates[input.sourceId] = {
+          status: 'success',
+          code: null,
+          message: null,
+        };
+      } else {
+        this.pdfExportStates[input.sourceId] = {
+          status: 'error',
+          code: result.code,
+          message: result.error,
+        };
+      }
+      return result;
+    },
+    /**
+     * Open the saved PDF's containing folder via
+     * `window.starPdf.reveal` (PDFEX-005 / AC4 — "Reveal in folder"
+     * toast action). No-op when the bridge is absent or the path is
+     * empty.
+     */
+    async revealPdfExport(savedPath: string): Promise<void> {
+      const bridge = typeof window !== 'undefined' ? window.starPdf : undefined;
+      if (!bridge || !savedPath) return;
+      await bridge.reveal(savedPath);
     },
     async structureCv(text: string): Promise<StarCvStructureResult | null> {
       const bridge = typeof window !== 'undefined' ? window.starCvStructurer : undefined;
