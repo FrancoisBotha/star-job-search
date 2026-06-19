@@ -29,7 +29,14 @@
             <q-btn outline no-caps class="ghost" label="Upload" @click="openPicker" />
           </div>
 
-          <label class="dropzone" :class="{ 'is-busy': isUploadBusy }">
+          <label
+            class="dropzone"
+            :class="{ 'is-busy': isUploadBusy, 'is-dragover': isDragover }"
+            @dragover.prevent="onDragOver"
+            @dragenter.prevent="onDragOver"
+            @dragleave.prevent="onDragLeave"
+            @drop.prevent="onDrop"
+          >
             <input
               ref="fileInput"
               type="file"
@@ -177,6 +184,7 @@ const store = useAppStore();
 
 const fileInput = ref<HTMLInputElement | null>(null);
 const uploadMessage = ref<string | null>(null);
+const isDragover = ref(false);
 
 const PROFILE_FIELD_LABELS: Record<string, string> = {
   targetRole: 'a target role',
@@ -259,6 +267,27 @@ async function onFileChosen(event: Event) {
   const file = target.files?.[0] ?? null;
   target.value = '';
   if (!file) return;
+  await handleFile(file);
+}
+
+function onDragOver(_event: DragEvent) {
+  if (isUploadBusy.value) return;
+  isDragover.value = true;
+}
+
+function onDragLeave(_event: DragEvent) {
+  isDragover.value = false;
+}
+
+async function onDrop(event: DragEvent) {
+  isDragover.value = false;
+  if (isUploadBusy.value) return;
+  const file = event.dataTransfer?.files?.[0] ?? null;
+  if (!file) return;
+  await handleFile(file);
+}
+
+async function handleFile(file: File) {
   const mime = detectMime(file);
   if (!mime) {
     uploadMessage.value = 'Only PDF or DOCX files are supported.';
@@ -339,7 +368,7 @@ function markScoresStale() {
 .cv-card__name { font-size: 14px; font-weight: 600; }
 .cv-card__sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-.dropzone { display: block; border: 1.5px dashed var(--border-strong); border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 8px; cursor: pointer; &:hover { border-color: var(--accent); background: var(--rail); } &.is-busy { opacity: 0.7; cursor: progress; } }
+.dropzone { display: block; border: 1.5px dashed var(--border-strong); border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 8px; cursor: pointer; &:hover { border-color: var(--accent); background: var(--rail); } &.is-busy { opacity: 0.7; cursor: progress; } &.is-dragover { border-color: var(--accent); background: var(--accent-tint); } }
 .dropzone__input { position: absolute; width: 0; height: 0; opacity: 0; pointer-events: none; }
 .dropzone__text { font-size: 13px; color: var(--text-3); }
 .dropzone__hint { font-size: 11px; color: var(--faint); margin-top: 6px; }
