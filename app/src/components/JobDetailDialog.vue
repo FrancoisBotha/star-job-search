@@ -276,6 +276,7 @@ import type { MatchReview, MatchReviewGenerateState } from 'src/stores/app-store
 import StarRating from 'src/components/StarRating.vue';
 import ScoreBar from 'src/components/ScoreBar.vue';
 import type { FactorKey, JobRecord, MatchScore } from 'src/types/models';
+import { formatSalary } from 'src/utils/salary';
 
 /**
  * Extended view of a JobRecord — the renderer-side mirror in
@@ -321,13 +322,7 @@ const open = computed({
 
 const workMode = computed(() => props.job.workMode || '');
 
-const salaryLabel = computed(() => {
-  const raw = props.job.salary;
-  if (raw === undefined || raw === null) return 'not stated';
-  const s = String(raw).trim();
-  if (!s) return 'not stated';
-  return s;
-});
+const salaryLabel = computed(() => formatSalary(props.job.salary));
 
 const sources = computed(() => {
   const list = props.job.sources;

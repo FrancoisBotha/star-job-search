@@ -70,6 +70,10 @@
           <div class="tile__meta">
             <div class="tile__title">{{ j.title || j.url }}</div>
             <div class="tile__sub">{{ subtitle(j) }}</div>
+            <div
+              class="tile__salary"
+              :class="{ 'tile__salary--muted': !hasSalary(j) }"
+            >{{ tileSalary(j) }}</div>
           </div>
           <span class="tile__tag">{{ j.hostname }}</span>
         </header>
@@ -136,6 +140,7 @@ import { useAppStore } from 'src/stores/app-store';
 import JobDetailDialog from 'src/components/JobDetailDialog.vue';
 import StarRating from 'src/components/StarRating.vue';
 import type { JobRecord, MatchScore } from 'src/types/models';
+import { formatSalary, isSalaryStated } from 'src/utils/salary';
 
 const store = useAppStore();
 
@@ -194,6 +199,21 @@ function subtitle(j: JobRecord): string {
   return [j.company, j.location].filter(Boolean).join(' · ') || j.hostname;
 }
 
+/**
+ * Tile salary label (EXTR-015). Runs the extracted salary string through
+ * the shared [[formatSalary]] helper so the tile and the job-detail modal
+ * read the same job the same way. When the posting states no salary the
+ * line shows a subtle 'Salary not stated' instead of leaking 'undefined',
+ * '0', or a blank cell.
+ */
+function hasSalary(j: JobRecord): boolean {
+  return isSalaryStated(j.salary);
+}
+
+function tileSalary(j: JobRecord): string {
+  return hasSalary(j) ? formatSalary(j.salary) : 'Salary not stated';
+}
+
 /** Toggle a job between starred (shortlisted on the Starred page) and new. */
 function toggleStar(j: JobRecord) {
   const next = j.status === 'starred' ? 'new' : 'starred';
@@ -249,6 +269,15 @@ onMounted(async () => {
     display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   &__tag { font: 500 10px/1 var(--font-mono); color: var(--olive-text); background: var(--olive-tint); padding: 4px 7px; border-radius: 5px; flex-shrink: 0; }
+  &__salary {
+    font: 500 12px/1.3 var(--font-mono);
+    color: var(--text-2);
+    margin-top: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  &__salary--muted { color: var(--muted); font-style: italic; }
   &__score { display: flex; align-items: center; gap: 8px; min-height: 18px; }
   &__percent { font: 500 12px/1 var(--font-mono); color: var(--text-2); }
   &__stale { font: 500 10px/1 var(--font-mono); color: var(--olive-text); background: var(--olive-tint); padding: 3px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
