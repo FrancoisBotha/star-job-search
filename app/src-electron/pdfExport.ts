@@ -39,6 +39,11 @@ import {
   buildTectonicEnv,
   resolveTectonicBinaryPath,
 } from './pdfExport/latexEngine';
+import {
+  PdfExportValidationError,
+  selectPaperSize,
+  validateLatexBuild,
+} from './pdfExport/templates';
 import type { CoverLetter, TailoredCv } from './tailor';
 
 /** Compile timeout default — long enough for a recruiter-grade two-page CV
@@ -59,6 +64,9 @@ export interface PdfExportInput {
   cv: TailoredCv;
   coverLetter?: CoverLetter;
   contact?: ContactBlock;
+  /** BCP-47 locale tag used to pick page size (PDFEX-003 / FR-004):
+   *  US + Canada → Letter, anything else → A4. Omit to default to A4. */
+  locale?: string;
 }
 
 export interface CompileOpts {
@@ -156,16 +164,28 @@ function safe(text: string): string {
 
 // --- LaTeX template ---------------------------------------------------------
 
-const PREAMBLE = [
-  '\\documentclass[11pt,a4paper]{article}',
-  '\\usepackage[utf8]{inputenc}',
-  '\\usepackage[T1]{fontenc}',
-  '\\usepackage[margin=2cm]{geometry}',
-  '\\usepackage{enumitem}',
-  '\\usepackage{hyperref}',
-  '\\setlist{nosep,leftmargin=*}',
-  '\\pagestyle{empty}',
-].join('\n');
+/** ATS-safe shared preamble (PDFEX-003 / FR-003 / FR-004 / NFR-001):
+ *   - lmodern + T1 fontenc → Latin Modern Type 1 fonts EMBEDDED in the
+ *     PDF so it renders identically everywhere without depending on
+ *     system fonts;
+ *   - `\pdfgentounicode=1` → PDF carries ToUnicode CMaps so text is
+ *     selectable as UTF-8, never a rasterised image of text;
+ *   - geometry margin stays constant across Letter/A4. The paper size
+ *     itself is locale-driven via {@link selectPaperSize}. */
+function buildPreamble(paperSize: 'letterpaper' | 'a4paper'): string {
+  return [
+    `\\documentclass[11pt,${paperSize}]{article}`,
+    '\\usepackage[utf8]{inputenc}',
+    '\\usepackage[T1]{fontenc}',
+    '\\usepackage{lmodern}',
+    '\\usepackage[margin=2cm]{geometry}',
+    '\\usepackage{enumitem}',
+    '\\usepackage{hyperref}',
+    '\\setlist{nosep,leftmargin=*}',
+    '\\pagestyle{empty}',
+    '\\pdfgentounicode=1',
+  ].join('\n');
+}
 
 function renderContact(contact: ContactBlock | undefined): string {
   if (!contact) return '';
@@ -228,7 +248,7 @@ export function renderTailoredDocToLatex(input: PdfExportInput): string {
   const cv = renderCv(input.cv);
   const cover = input.coverLetter ? `\n\n\\newpage\n${renderCoverLetter(input.coverLetter)}` : '';
   return [
-    PREAMBLE,
+    buildPreamble(selectPaperSize(input.locale)),
     '\\begin{document}',
     contact,
     cv,
@@ -296,6 +316,18 @@ export async function compileTailoredDocToPdf(
   }
 
   const tex = renderTailoredDocToLatex(input);
+  // PDFEX-003 FR-006: pre-compile build validation. Required structural
+  // commands present + no unresolved {{PLACEHOLDER}} tokens. Throwing
+  // here guarantees we never even invoke the engine on a malformed
+  // document — so no partial PDF can ever appear on disk.
+  try {
+    validateLatexBuild(tex);
+  } catch (err) {
+    if (err instanceof PdfExportValidationError) {
+      throw new PdfExportError(err.message, { cause: err });
+    }
+    throw err;
+  }
   const work = await mkdtemp(path.join(tmpdir(), 'pdfex-'));
   const inputPath = path.join(work, 'doc.tex');
   const pdfPath = path.join(work, 'doc.pdf');
