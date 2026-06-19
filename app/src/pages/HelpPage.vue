@@ -123,6 +123,29 @@
         </div>
       </div>
 
+      <!-- Tailoring CVs and cover letters -->
+      <h2 class="section-title sec">Tailoring CVs and cover letters</h2>
+      <p class="lead">
+        Tailoring drafts a job-specific CV and cover letter from your real CV and Profile, grounded
+        in the evidence you already entered — nothing is invented. Drafts are
+        <strong>advisory</strong> and <strong>ATS-targeted</strong>: they mirror the listing's
+        keywords, run an ATS checklist, and sit alongside the deterministic stars rather than
+        replacing them. Star <strong>never submits applications</strong> on your behalf — every
+        draft leaves the app only when you press <strong>Copy</strong> or <strong>Export</strong>.
+        Tailoring opens <strong>no new egress</strong> beyond the one-time "what is sent"
+        disclosure you already accepted for CV structuring and AI Match Review; the same sanctioned
+        OpenRouter channel is reused.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in tailorSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- FAQ -->
       <h2 class="section-title sec">Frequently asked</h2>
       <div class="card card--rows">
@@ -313,6 +336,45 @@ const reviewSteps = [
   {
     title: 'Error states by code',
     body: 'If the OpenRouter key is missing, Star shows a no-key message that points to Settings → LLM integration instead of attempting the call. If the model returns an error or the network fails, you see a model error with a Retry. If the chosen default model is not function-calling capable (the structured output the review needs), Star shows a model-not-capable message and asks you to pick a different default — the deterministic stars are unaffected either way.',
+  },
+];
+
+const tailorSteps = [
+  {
+    title: 'Open Tailoring from Starred',
+    body: 'On the Starred page, every job has a Generate button. Click it to deep-link into the Tailor view for that role — Star drafts a tailored CV and a cover letter from your current CV and Profile. The button is disabled until you have a saved OpenRouter key and a default model under Settings → LLM integration, with hover text telling you exactly what is missing.',
+  },
+  {
+    title: 'Switch between the Tailored CV and Cover letter tabs',
+    body: 'Tailor opens with two tabs along the top — Tailored CV and Cover letter. The CV tab shows a side-by-side diff against your base CV; the Cover letter tab shows an editable draft addressed to the role and company from the listing. Both tabs share the same draft and the same provenance badge ("AI draft · advisory · {model} · {date}").',
+  },
+  {
+    title: 'Read the diff against your base CV',
+    body: 'On the Tailored CV tab, the base CV sits on the left and the tailored version on the right. Added wording is highlighted, removed wording is struck through, and unchanged text stays plain — so you can see at a glance what the model rewrote and why. The draft is grounded in your CV; the model is not allowed to invent tokens that are not already in your evidence.',
+  },
+  {
+    title: 'Accept or Dismiss suggestions — with a live deterministic rescore',
+    body: 'A Star suggestions dock lists each rewrite with its category, rationale and projected gain. Accept folds the change into the draft and triggers an immediate Epic 5 rescore against the same posting — the live MATCH chip in the top bar updates as soon as the deterministic scorer finishes. Dismiss drops the suggestion without changing the draft. The accept path never calls the LLM and never writes the deterministic match scores directly; the 1–5 stars remain authoritative.',
+  },
+  {
+    title: 'Watch the ATS checklist',
+    body: 'Below the suggestions, the ATS checklist scores the draft against rules that real applicant-tracking systems care about — heading presence, keyword placement, punctuation normalisation, machine-readability. Each rule shows pass (✓) or fail (✗) with a short detail; failing keywords are listed under "Missing keywords" as chips so you know which ones the draft still has not absorbed.',
+  },
+  {
+    title: 'Choose the tailoring intensity',
+    body: 'The top bar carries an intensity toggle — Light touch (default) or Aggressive. Light touch keeps your CV close to the original and only nudges wording to match the role; Aggressive rewrites more broadly when the job is a stretch. Switching intensity re-generates the draft using the same evidence; nothing else changes.',
+  },
+  {
+    title: 'Answer gap prompts on the cover letter',
+    body: 'When the listing asks for something your evidence does not clearly cover — domain, start date, seniority, language — the cover letter surfaces an Open questions panel rather than silently papering over the gap. Each question carries Confirm and Not applicable buttons so you answer in your own words. The textarea above is fully editable in place, and your edits flow through to Copy and Export unchanged.',
+  },
+  {
+    title: 'Copy and Export — text or Markdown',
+    body: 'Use the Copy button to put the current draft on the clipboard, Export text (cover letter only) to save plain text, or Export Markdown to save a Markdown file. These are the only ways a draft leaves the app — Star never submits the application for you, so you remain the human in the loop on every send.',
+  },
+  {
+    title: 'Stale drafts and Regenerate',
+    body: 'Drafts cache per job and survive restart. When you edit your CV or Profile, or the underlying job is re-extracted, Star marks the draft as may be out of date and surfaces a Regenerate button — a fresh structured call against the current inputs. If something goes wrong (no key, no default model, model not capable of structured output, rate limit or network error) the banner explains exactly which code fired and offers Try again when it makes sense.',
   },
 ];
 
