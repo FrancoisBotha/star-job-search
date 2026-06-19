@@ -1,4 +1,20 @@
 /**
+ * Third-party attribution (PDFEX-006).
+ *
+ * This file draws *conceptual inspiration* from the MIT-licensed
+ * `career-ops` project — specifically the existence and ATS-safe
+ * single-column shape of `templates/cv-template.tex`, the
+ * `{{PLACEHOLDER}}`-substitution convention used by
+ * `build-cv-latex.mjs`, and the pre-compile structural validation idea
+ * from `generate-latex.mjs`. No template text, prompts, or source code
+ * from career-ops is copied verbatim or in substantial part — every
+ * preamble line, section, and validator rule here is authored against
+ * this project's own ATS rules.
+ *
+ * career-ops licence: MIT, © 2026 Santiago Fernández de Valderrama.
+ * The full licence text and the per-artefact provenance table are
+ * reproduced in the project-root NOTICE.md.
+ *
  * PDFEX-003 — ATS-safe LaTeX template(s) for CV + cover letter, plus
  * build validation that runs BEFORE the engine is invoked.
  *

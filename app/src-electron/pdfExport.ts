@@ -1,4 +1,20 @@
 /**
+ * Third-party attribution (PDFEX-006).
+ *
+ * This file draws *conceptual inspiration* from the MIT-licensed
+ * `career-ops` project, specifically `build-cv-latex.mjs` (the idea of
+ * a `{{PLACEHOLDER}}`-substitution LaTeX builder, a single shared
+ * LaTeX-special escape helper, and a URL-scheme allow-list before
+ * linking) and `generate-pdf.mjs` (the idea of a sandboxed, offline
+ * LaTeX-compile pipeline driving the engine via a child process). No
+ * source code from career-ops is copied verbatim or in substantial
+ * part — the implementations here are written from first principles
+ * against this project's own contracts.
+ *
+ * career-ops licence: MIT, © 2026 Santiago Fernández de Valderrama.
+ * The full licence text and the per-artefact provenance table are
+ * reproduced in the project-root NOTICE.md.
+ *
  * PDF-export core (PDFEX-002 / Epic 8).
  *
  * Main-process module that turns an Epic 7 tailored doc (CV + cover letter)

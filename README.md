@@ -86,6 +86,14 @@ teammates to start with the same backlog of tickets, you'll need to
 either regenerate them from the shared epics or hand-export the DB
 separately.
 
+## Third-party notices
+
+This project bundles a LaTeX engine and fonts, and draws on an
+MIT-licensed external project for some of its structural ideas. The
+attribution, licence text, and provenance for every third-party item
+shipped or adapted are reproduced in [NOTICE.md](./NOTICE.md). If you
+redistribute Star Job Search, you must preserve that file.
+
 ## Next steps
 
 Open the app and read [GettingStarted.md](GettingStarted.md) — it walks
