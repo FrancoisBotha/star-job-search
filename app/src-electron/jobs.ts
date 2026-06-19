@@ -23,6 +23,10 @@ export interface JobRecord {
   company?: string | null;
   location?: string | null;
   description?: string | null;
+  /** Salary string as stated on the posting (e.g. "£70k–£90k"), or null when
+   *  the posting states none. EXTR-013: never fabricated by the extractor —
+   *  the LLM is instructed to copy the on-page value verbatim or return null. */
+  salary?: string | null;
   postedAt?: number | null;
   fetchedAt: number;
   status?: string;
@@ -131,11 +135,18 @@ const CREATE_JOBS_TABLE_SQL = `
     company     TEXT,
     location    TEXT,
     description TEXT,
+    salary      TEXT,
     posted_at   INTEGER,
     fetched_at  INTEGER NOT NULL,
     status      TEXT NOT NULL DEFAULT 'new'
   )
 `;
+
+// EXTR-013: additive, guarded migration so existing databases that pre-date
+// the `salary` column keep loading. SQLite raises a "duplicate column name"
+// error when the column already exists — that path is the no-op success case
+// and is swallowed; any other error is left to bubble (real schema problem).
+const ADD_SALARY_COLUMN_SQL = `ALTER TABLE jobs ADD COLUMN salary TEXT`;
 
 const CREATE_SITE_PROFILES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS site_profiles (
@@ -154,6 +165,7 @@ interface JobRow {
   company: string | null;
   location: string | null;
   description: string | null;
+  salary: string | null;
   posted_at: number | null;
   fetched_at: number;
   status: string;
@@ -175,6 +187,7 @@ function rowToJob(row: JobRow): JobRecord {
     company: row.company,
     location: row.location,
     description: row.description,
+    salary: row.salary,
     postedAt: row.posted_at,
     fetchedAt: row.fetched_at,
     status: row.status,
@@ -201,13 +214,22 @@ function rowToProfile(row: SiteProfileRow): SiteProfile {
 export function createJobsStore(db: JobsDatabaseLike): JobsStore {
   db.exec(CREATE_JOBS_TABLE_SQL);
   db.exec(CREATE_SITE_PROFILES_TABLE_SQL);
+  // EXTR-013: add the salary column on databases created before this ticket.
+  // Idempotent — SQLite throws "duplicate column name" when the column is
+  // already there, which is the no-op success case.
+  try {
+    db.exec(ADD_SALARY_COLUMN_SQL);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/duplicate column name/i.test(msg)) throw err;
+  }
 
   const knownStmt = db.prepare('SELECT source_id FROM jobs');
   const insertStmt = db.prepare(
-    'INSERT OR IGNORE INTO jobs (source_id, hostname, url, title, company, location, description, posted_at, fetched_at, status) VALUES (@source_id, @hostname, @url, @title, @company, @location, @description, @posted_at, @fetched_at, @status)',
+    'INSERT OR IGNORE INTO jobs (source_id, hostname, url, title, company, location, description, salary, posted_at, fetched_at, status) VALUES (@source_id, @hostname, @url, @title, @company, @location, @description, @salary, @posted_at, @fetched_at, @status)',
   );
   const listStmt = db.prepare(
-    'SELECT source_id, hostname, url, title, company, location, description, posted_at, fetched_at, status FROM jobs ORDER BY fetched_at DESC',
+    'SELECT source_id, hostname, url, title, company, location, description, salary, posted_at, fetched_at, status FROM jobs ORDER BY fetched_at DESC',
   );
   const setStatusStmt = db.prepare('UPDATE jobs SET status = ? WHERE source_id = ?');
   const getProfileStmt = db.prepare(
@@ -233,6 +255,7 @@ export function createJobsStore(db: JobsDatabaseLike): JobsStore {
           company: job.company ?? null,
           location: job.location ?? null,
           description: job.description ?? null,
+          salary: job.salary ?? null,
           posted_at: job.postedAt ?? null,
           fetched_at: job.fetchedAt,
           status: job.status ?? 'new',

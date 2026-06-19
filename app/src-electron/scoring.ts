@@ -91,6 +91,7 @@ function jobToListing(j: JobRecord): ScoringListing {
     title: j.title ?? null,
     description: j.description ?? null,
     location: j.location ?? null,
+    salary: j.salary ?? null,
   };
 }
 

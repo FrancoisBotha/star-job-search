@@ -30,6 +30,9 @@ export interface JobRecord {
   company?: string | null;
   location?: string | null;
   description?: string | null;
+  /** Salary string as stated on the posting (e.g. "£70k–£90k"), or null when
+   *  the posting states none. EXTR-013: never fabricated by the extractor. */
+  salary?: string | null;
   postedAt?: number | null;
   fetchedAt: number;
   status?: JobStatus | string;

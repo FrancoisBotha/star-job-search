@@ -66,6 +66,10 @@ export interface ScoringListing {
   title?: string | null;
   description?: string | null;
   location?: string | null;
+  /** Structured salary string as stated on the posting (EXTR-013). When
+   *  present the salary factor uses this verbatim rather than text-mining
+   *  the description. Null/undefined falls back to description scanning. */
+  salary?: string | null;
 }
 
 /** Minimal profile slice the scorer needs. Mirrors the relevant subset of

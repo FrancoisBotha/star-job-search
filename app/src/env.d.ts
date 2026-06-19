@@ -230,6 +230,8 @@ interface StarBoardJob {
   company?: string | null;
   location?: string | null;
   description?: string | null;
+  /** EXTR-013: salary verbatim from the posting, or null when not stated. */
+  salary?: string | null;
   postedAt?: number | null;
   fetchedAt: number;
   status?: string;

@@ -46,6 +46,10 @@ export const JobSchema = z.object({
   company: z.string().nullable().optional(),
   location: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
+  // EXTR-013: salary string as stated on the posting (e.g. "£70k–£90k").
+  // Null when the posting states none — the extraction prompt forbids
+  // fabricating a salary from inferred bands / market rates / etc.
+  salary: z.string().nullable().optional(),
 });
 export type StructuredJob = z.infer<typeof JobSchema>;
 
@@ -453,11 +457,20 @@ ${(sample ?? '').slice(0, 12000)}`,
       let company: string | null = null;
       let location: string | null = null;
       let description: string | null = null;
+      let salary: string | null = null;
       try {
         const structured = llm.withStructuredOutput(JobSchema, { name: 'JobSchema' });
         const job = await structured.invoke(
           `Extract the job posting fields from the page below. Posting URL: ${cand.url}.
-Return: title, company, location, description (cleaned plain text).
+Return: title, company, location, description (cleaned plain text), salary.
+
+Rules for the salary field (EXTR-013):
+  - Copy the salary EXACTLY AS STATED on the posting (verbatim), preserving the
+    currency symbol, range delimiter, and any units (e.g. "£70k–£90k",
+    "$120,000 - $150,000 per year", "€50k OTE").
+  - If the posting does NOT state a salary, return null. Do NOT fabricate,
+    estimate, infer from market rates, or fill in a guess. Null is the
+    correct answer when no salary is stated.
 
 BODY:
 ${(body ?? '').slice(0, 16000)}`,
@@ -466,6 +479,7 @@ ${(body ?? '').slice(0, 16000)}`,
         company = job.company ?? null;
         location = job.location ?? null;
         description = job.description ?? null;
+        salary = job.salary ?? null;
       } catch {
         // Stub fallback — derive what we can from the card text we kept in
         // enumerate. Lets the user still see the posting in the list even if
@@ -482,6 +496,7 @@ ${(body ?? '').slice(0, 16000)}`,
         company,
         location,
         description,
+        salary,
         fetchedAt,
       };
       extracted.push(record);

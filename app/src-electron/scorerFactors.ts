@@ -367,7 +367,13 @@ export function evaluateSalary(
       rationale: 'Profile salaryMin not set.',
     };
   }
-  const text = listingText(listing);
+  // EXTR-013: prefer the structured `salary` field captured by the extractor
+  // (verbatim from the posting). Falling back to description text-mining is
+  // only correct when the field is absent — otherwise an off-hand mention in
+  // the description body (e.g. "comparable to similar $40k roles") could
+  // outweigh the actual stated band.
+  const structured = (listing.salary ?? '').trim();
+  const text = structured.length > 0 ? structured : listingText(listing);
   const range = parseSalaryRange(text);
   if (!range) {
     return {
