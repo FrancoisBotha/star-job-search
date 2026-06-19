@@ -400,11 +400,22 @@ interface StarReviewApi {
   get: (sourceId: string) => Promise<StarMatchReview | null>;
 }
 
+/** Bridge exposed by src-electron/electron-preload.ts (CVPROF-011). Resolves
+ *  a picked/dropped File object to its absolute filesystem path via Electron's
+ *  `webUtils.getPathForFile` — a contextIsolation-safe replacement for the
+ *  Electron-32-removed `File.path` property. Returns "" when no path can be
+ *  resolved (synthetic Blob-backed File, test-only inputs); the renderer must
+ *  treat empty as a hard upload error and not call cv:upload. */
+interface StarFileApi {
+  getPathForFile: (file: File) => string;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
   starSites?: StarSitesApi;
   starProfile?: StarProfileApi;
+  starFile?: StarFileApi;
   starCv?: StarCvApi;
   starCvStructurer?: StarCvStructurerApi;
   starApiKey?: StarApiKeyApi;

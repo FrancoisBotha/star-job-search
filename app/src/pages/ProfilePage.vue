@@ -254,7 +254,10 @@ async function onFileChosen(event: Event) {
     uploadMessage.value = 'Only PDF or DOCX files are supported.';
     return;
   }
-  const filePath = (file as File & { path?: string }).path ?? '';
+  // Electron 32 removed the File.path property. Resolve the absolute
+  // filesystem path through the preload-exposed webUtils.getPathForFile
+  // bridge (CVPROF-011) — the File is consumed inside the preload helper.
+  const filePath = window.starFile?.getPathForFile(file) ?? '';
   if (!filePath) {
     uploadMessage.value = 'Could not resolve the file path. Try the file picker.';
     return;

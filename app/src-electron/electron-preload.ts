@@ -6,7 +6,7 @@
  * Future bridges (CV file picking, backup-folder selection, secure key
  * storage) belong here too.
  */
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('starWindow', {
   minimize: () => ipcRenderer.send('window:minimize'),
@@ -67,6 +67,25 @@ interface CvUploadInput {
   mime: 'pdf' | 'docx';
   profileId?: string;
 }
+
+// File-path bridge (CVPROF-011). Electron 32 removed the `File.path`
+// property; the renderer must resolve picked/dropped File objects to an
+// absolute filesystem path through this preload-side helper. The File
+// object is consumed INSIDE the preload-defined function (where the
+// `webUtils.getPathForFile` API lives) — `contextIsolation` keeps the
+// File reference structurally cloneable across the bridge. Returns an
+// empty string when no path can be resolved (e.g. a synthetic File built
+// from a Blob in tests), so the renderer can surface a user-facing
+// error instead of writing an invalid CV record.
+contextBridge.exposeInMainWorld('starFile', {
+  getPathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file) || '';
+    } catch {
+      return '';
+    }
+  },
+});
 
 contextBridge.exposeInMainWorld('starCv', {
   upload: (input: CvUploadInput) => ipcRenderer.invoke('cv:upload', input),

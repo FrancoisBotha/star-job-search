@@ -375,14 +375,31 @@ async function handleFile(file: File) {
   await runUploadAndStructure(file, mime);
 }
 
+// Electron 32 removed the File.path property. The absolute filesystem
+// path comes from the preload-exposed webUtils.getPathForFile bridge
+// (CVPROF-011) — never the bare file name, which would hand the main
+// process a filename with no directory and break the userData copy.
+// Empty path → user-facing error, no cv:upload call.
+function resolveFilePath(file: File): string {
+  return window.starFile?.getPathForFile(file) ?? '';
+}
+
 async function uploadOnly(file: File, mime: 'pdf' | 'docx') {
-  const filePath = (file as File & { path?: string }).path ?? file.name;
+  const filePath = resolveFilePath(file);
+  if (!filePath) {
+    fileError.value = 'Could not resolve the CV file path. Try the file picker.';
+    return;
+  }
   const cv = await store.uploadCv({ filePath, fileName: file.name, mime });
   if (cv) hydrateFormFromStore();
 }
 
 async function runUploadAndStructure(file: File, mime: 'pdf' | 'docx') {
-  const filePath = (file as File & { path?: string }).path ?? file.name;
+  const filePath = resolveFilePath(file);
+  if (!filePath) {
+    fileError.value = 'Could not resolve the CV file path. Try the file picker.';
+    return;
+  }
   const cv = await store.uploadCv({ filePath, fileName: file.name, mime });
   if (!cv) {
     fileError.value = 'Upload failed. Please try a different file.';
