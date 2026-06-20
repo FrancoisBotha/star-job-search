@@ -769,6 +769,53 @@ interface StarPdfApi {
   reveal: (fullPath: string) => Promise<void>;
 }
 
+/** Stable failure codes returned by word:* IPC channels (UEXP-003 / Epic 12).
+ *  Mirrors `WordExportErrorCode` in src-electron/wordExportIpc.ts. */
+type StarWordErrorCode = 'NO_DOC' | 'RENDER_ERROR' | 'IO_ERROR';
+
+/** Export format mirror (epic §7 additive provenance). Today the `starWord`
+ *  bridge always records `'word'`; the union shape lets a future unified
+ *  export record markdown / pdf provenance without a shape change. */
+type StarWordExportFormat = 'markdown' | 'word' | 'pdf';
+
+interface StarWordExportOpts {
+  /** BCP-47 locale tag. US/CA → US Letter, anything else → A4. */
+  locale?: string;
+}
+
+/** Provenance record for one successful Word export (UEXP-003 / Epic 12 §7).
+ *  Pins the saved file to the exact tailored-doc version, the model that
+ *  generated it, the timestamp, plus the additive `format` + `filePath`
+ *  fields described in the epic. */
+interface StarWordExportRecord {
+  id: string;
+  tailoredDocId: string;
+  tailoredDocVersion: number;
+  modelSlug: string;
+  exportedAt: number;
+  savedPath: string;
+  format: 'word';
+  filePath: string;
+}
+
+type StarWordExportResult =
+  | { ok: true; record: StarWordExportRecord }
+  | { ok: false; code: StarWordErrorCode; error: string };
+
+/** Bridge exposed by src-electron/electron-preload.ts for Word export
+ *  (UEXP-003 / Epic 12). `export` renders the persisted TailoredDoc via the
+ *  pinned `docx` library, opens a native save dialog with a role/company
+ *  default filename, writes the `.docx` locally (no submission — epic §9),
+ *  and records provenance. `reveal` calls shell.showItemInFolder on the
+ *  saved path. */
+interface StarWordApi {
+  export: (
+    tailoredDocId: string,
+    opts?: StarWordExportOpts,
+  ) => Promise<StarWordExportResult>;
+  reveal: (fullPath: string) => Promise<void>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
@@ -789,4 +836,5 @@ interface Window {
   starTailor?: StarTailorApi;
   starTailorEngine?: StarTailorEngineApi;
   starPdf?: StarPdfApi;
+  starWord?: StarWordApi;
 }

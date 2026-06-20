@@ -327,6 +327,24 @@ contextBridge.exposeInMainWorld('starPdf', {
   reveal: (fullPath: string) => ipcRenderer.invoke('pdf:reveal', fullPath),
 });
 
+// Word (.docx) export bridge (UEXP-003 / Epic 12). `export` renders the
+// persisted TailoredDoc via the pinned `docx` library (UEXP-002), opens a
+// native save dialog with a role/company default filename, writes the
+// `.docx` locally — Star performs NO submission — and records provenance
+// per WordExportRecord (epic §7). `reveal` calls shell.showItemInFolder on
+// the saved path. Both return a tagged-union result with stable error
+// codes (NO_DOC / RENDER_ERROR / IO_ERROR) so the renderer can branch
+// without parsing exception messages.
+interface WordExportOptsInput {
+  locale?: string;
+}
+
+contextBridge.exposeInMainWorld('starWord', {
+  export: (tailoredDocId: string, opts?: WordExportOptsInput) =>
+    ipcRenderer.invoke('word:export', { tailoredDocId, opts }),
+  reveal: (fullPath: string) => ipcRenderer.invoke('word:reveal', fullPath),
+});
+
 // External shell bridge (JOBDET-001). Opens http/https URLs in the user's OS
 // default browser. Distinct from `starBoard.open` (which navigates the
 // embedded Discover browser via `view:open`). The main-process handler

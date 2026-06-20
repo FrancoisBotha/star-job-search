@@ -25,6 +25,11 @@ import {
   createInMemoryPdfExportRecordsStore,
   registerPdfExportIpc,
 } from './pdfExportIpc';
+import { renderTailoredDocToDocx } from './wordExport';
+import {
+  createInMemoryWordExportRecordsStore,
+  registerWordExportIpc,
+} from './wordExportIpc';
 import { createMatchScoresStore } from './matchScores';
 import { createMatchReviewsStore } from './matchReviews';
 import { buildMatchReviewLlm } from './matchReview';
@@ -517,6 +522,31 @@ function createWindow() {
     jobsStore,
     recordsStore: pdfExportRecords,
     compile: (input, opts) => compileTailoredDocToPdf(input, opts),
+    dialog: {
+      showSaveDialog: (opts) =>
+        mainWindow
+          ? dialog.showSaveDialog(mainWindow, opts)
+          : dialog.showSaveDialog(opts),
+    },
+    shell: {
+      showItemInFolder: (fullPath: string) => shell.showItemInFolder(fullPath),
+    },
+    writeFile: (filePath: string, data: Buffer) => writeFile(filePath, data),
+  });
+
+  // Wire the Word (.docx) export IPC (UEXP-003 / Epic 12). Renders the
+  // approved tailored CV (+ optional cover letter) through the pinned `docx`
+  // library (UEXP-002), opens a native save dialog, writes the .docx
+  // locally, and records provenance. Star performs NO submission — it only
+  // writes a local file (epic §9). The dialog / shell / writeFile / render
+  // are passed in so the IPC module stays free of direct Electron coupling
+  // and is unit-testable.
+  const wordExportRecords = createInMemoryWordExportRecordsStore();
+  registerWordExportIpc(ipcMain, {
+    docsStore: tailoredDocsStore,
+    jobsStore,
+    recordsStore: wordExportRecords,
+    render: (input) => renderTailoredDocToDocx(input),
     dialog: {
       showSaveDialog: (opts) =>
         mainWindow
