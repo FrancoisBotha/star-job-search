@@ -22,6 +22,22 @@ renderers.
 - Server-side rendering — the engine must run on the user's machine.
 - Supporting user-provided custom LaTeX templates (post-MVP).
 
+## §6 UI / Export entry point — delegated to Epic 12
+
+> **Delegation note (Epic 8 → Epic 12).**
+> The Tailor view no longer renders its own standalone **Export PDF**
+> button. The single entry point for exporting a tailored document as
+> PDF is the **PDF** item of the **unified Export menu** defined in
+> **[Epic 12 — Unified Export](epic_12_UNIFIED_EXPORT.md) §10** (UI)
+> and **§13.5** (dispatch). That menu item delegates back to this
+> epic's PDF pipeline (the `starPdf` bridge); Epic 8 still owns the
+> actual LaTeX engine, `.tex` templating, and on-disk PDF writer —
+> only the button / control surface has moved.
+
+The disable-with-reason behaviour ("PDF toolchain not available" tooltip
+when `starPdf` is absent on `window`) is owned by Epic 12 §10; the
+underlying availability signal is still produced by this epic.
+
 ## §10 Engine options considered
 
 The spike (PDFEX-001) evaluates these three options against the
