@@ -61,12 +61,15 @@
              Visible on both the CV and Cover-letter tabs (FR-001), disabled
              until a tailored doc exists (FR-006). Individual items are
              greyed-with-tooltip when their prerequisite is absent. -->
+        <!-- UEXP-006: do NOT bind `:loading` here. Epic 12 §10 requires
+             other menu items to remain usable while one export is running;
+             the per-format banners (markdown-exporting / word-exporting /
+             pdf-exporting) carry the in-flight state instead. -->
         <q-btn-dropdown
           unelevated color="primary" no-caps
           label="Export"
           data-test="export-menu"
           :disable="!doc"
-          :loading="isExportingMarkdown || isExportingWord || isExportingPdf"
         >
           <q-list dense>
             <q-item
