@@ -376,6 +376,46 @@ contextBridge.exposeInMainWorld('starEval', {
     ipcRenderer.invoke('webResearch:acknowledgeDisclosure'),
 });
 
+// CV Enrichment bridge (ENRICH-005 / Epic 13). Four channels that wire the
+// ENRICH-001..004 backend into the renderer:
+//   analyze()                        — weak-bullet report + the underlying doc
+//   questions({ report })            — metric-discovery questions
+//   propose({ doc, candidates, questions, answers })
+//                                    — grounded ProposedChange[] (provenance-gated)
+//   apply({ doc, acceptedChanges })  — write new versioned CV, re-derive
+//                                      profile, fire Epic 5 / Epic 6 stale hooks
+// Every call resolves to a tagged-union with stable error codes (NO_API_KEY /
+// NO_DEFAULT_MODEL / NO_CV / MODEL_NOT_CAPABLE / RATE_LIMITED / NETWORK /
+// LLM_ERROR / INVALID_INPUT) so the renderer can branch without parsing
+// exception messages. No new egress beyond OpenRouter — the one-time Epic 4
+// "what is sent" disclosure (already shared across the app) gates the first
+// LLM send.
+interface StarEnrichQuestionsInput {
+  report: unknown;
+}
+interface StarEnrichProposeInput {
+  doc: unknown;
+  candidates: unknown[];
+  questions: unknown[];
+  answers: unknown[];
+}
+interface StarEnrichApplyInput {
+  doc: unknown;
+  acceptedChanges: unknown[];
+  verifiedSkills?: string[];
+  profileId?: string;
+}
+
+contextBridge.exposeInMainWorld('starEnrich', {
+  analyze: () => ipcRenderer.invoke('enrich:analyze'),
+  questions: (input: StarEnrichQuestionsInput) =>
+    ipcRenderer.invoke('enrich:questions', input),
+  propose: (input: StarEnrichProposeInput) =>
+    ipcRenderer.invoke('enrich:propose', input),
+  apply: (input: StarEnrichApplyInput) =>
+    ipcRenderer.invoke('enrich:apply', input),
+});
+
 // External shell bridge (JOBDET-001). Opens http/https URLs in the user's OS
 // default browser. Distinct from `starBoard.open` (which navigates the
 // embedded Discover browser via `view:open`). The main-process handler

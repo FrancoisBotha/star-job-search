@@ -896,6 +896,172 @@ interface StarEvalApi {
   acknowledgeWebResearchDisclosure: () => Promise<StarWebResearchSetting>;
 }
 
+/** Stable failure codes returned by the enrich:* IPC channels (ENRICH-005).
+ *  Mirrors `EnrichErrorCode` in src-electron/enrichmentIpc.ts. */
+type StarEnrichErrorCode =
+  | 'NO_API_KEY'
+  | 'NO_DEFAULT_MODEL'
+  | 'NO_CV'
+  | 'MODEL_NOT_CAPABLE'
+  | 'RATE_LIMITED'
+  | 'NETWORK'
+  | 'LLM_ERROR'
+  | 'INVALID_INPUT';
+
+/** ENRICH-001 weak-signal flag attached to each weak bullet candidate. */
+type StarEnrichWeakSignal =
+  | 'generic_verb'
+  | 'no_metric'
+  | 'passive_voice'
+  | 'no_scope';
+
+/** ENRICH-001 prioritised weak-bullet candidate. */
+interface StarEnrichWeakBulletCandidate {
+  path: string;
+  text: string;
+  signals: StarEnrichWeakSignal[];
+  reason: string;
+}
+
+/** ENRICH-001 weak-bullet report. */
+interface StarEnrichWeakBulletReport {
+  items: StarEnrichWeakBulletCandidate[];
+}
+
+/** ENRICH-002 metric-discovery question kind. */
+type StarEnrichQuestionKind =
+  | 'scale'
+  | 'before_after'
+  | 'team_size'
+  | 'throughput'
+  | 'outcome';
+
+/** ENRICH-002 metric-discovery question. */
+interface StarEnrichMetricQuestion {
+  id: string;
+  path: string;
+  bulletText: string;
+  kind: StarEnrichQuestionKind;
+  question: string;
+}
+
+/** ENRICH-002 metric-discovery questionnaire. */
+interface StarEnrichMetricQuestionnaire {
+  questions: StarEnrichMetricQuestion[];
+}
+
+/** ENRICH-002 user answer to a single metric-discovery question. `skipped` is
+ *  the explicit "no number — leave this bullet alone" signal; downstream
+ *  rewriters must not fabricate a metric for a skipped item. */
+type StarEnrichMetricAnswer =
+  | { questionId: string; status: 'skipped' }
+  | { questionId: string; status: 'answered'; value: string };
+
+/** ENRICH-003 grounded enrichment proposal — the Epic 9 diff that would
+ *  perform the rewrite, plus the human-readable reason, the provenance
+ *  string ("from your answer: 250k users" / "minimal reword …"), and the
+ *  final gate verdict (provenance + Epic 9 gates). */
+interface StarEnrichProposal {
+  change: StarProposedChange;
+  reason: string;
+  provenance: string;
+  gateVerdict: {
+    ok: boolean;
+    reason: string;
+    untraceable: string[];
+  };
+}
+
+/** ENRICH-004 versioned CV record written by enrich:apply. */
+interface StarEnrichNewCvRecord {
+  id: string;
+  profileId: string;
+  version: number;
+  parsedText: string;
+  parsedFields: Record<string, unknown>;
+  uploadedAt: number;
+}
+
+/** ENRICH-004 base CV record dedup hits return unchanged. */
+interface StarEnrichBaseCvRecord {
+  id: string;
+  profileId: string;
+  version: number;
+  parsedFields: Record<string, unknown> | null;
+  parsedText: string;
+}
+
+/** ENRICH-004 apply result. `created` is false on a dedup hit (same accepted
+ *  set re-applied → existing latest row returned, no new version, no stale
+ *  hook firings). */
+interface StarEnrichApplyOutcome {
+  cv: StarEnrichNewCvRecord | StarEnrichBaseCvRecord;
+  created: boolean;
+  applied: StarProposedChange[];
+  rejected: StarRejectedChange[];
+  result: StarTailoringDocument;
+  applyKey: string;
+  parsedFields: StarCvParsedFields;
+}
+
+type StarEnrichAnalyzeResult =
+  | { ok: true; report: StarEnrichWeakBulletReport; doc: StarTailoringDocument }
+  | { ok: false; code: StarEnrichErrorCode; error: string };
+
+type StarEnrichQuestionsResult =
+  | { ok: true; questionnaire: StarEnrichMetricQuestionnaire }
+  | { ok: false; code: StarEnrichErrorCode; error: string };
+
+type StarEnrichProposeResult =
+  | {
+      ok: true;
+      proposals: StarEnrichProposal[];
+      applied: StarProposedChange[];
+      doc: StarTailoringDocument;
+    }
+  | { ok: false; code: StarEnrichErrorCode; error: string };
+
+type StarEnrichApplyResult =
+  | { ok: true; result: StarEnrichApplyOutcome }
+  | { ok: false; code: StarEnrichErrorCode; error: string };
+
+interface StarEnrichQuestionsInput {
+  report: StarEnrichWeakBulletReport;
+}
+interface StarEnrichProposeInput {
+  doc: StarTailoringDocument;
+  candidates: StarEnrichWeakBulletCandidate[];
+  questions: StarEnrichMetricQuestion[];
+  answers: StarEnrichMetricAnswer[];
+}
+interface StarEnrichApplyInput {
+  doc: StarTailoringDocument;
+  acceptedChanges: StarProposedChange[];
+  verifiedSkills?: string[];
+  profileId?: string;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the CV-Enrichment
+ *  flow (ENRICH-005 / Epic 13). `analyze` reads the latest CV, builds a
+ *  TailoringDocument, and runs the ENRICH-001 weak-bullet analyzer (with the
+ *  Epic 2 default-model ranking pass). `questions` runs the ENRICH-002
+ *  metric-discovery question generator over the prior report. `propose`
+ *  runs the ENRICH-003 grounded generator with the user's answers — every
+ *  rewrite goes through the answer-provenance gate AND the Epic 9 gates so
+ *  no fabricated metric / frozen-field edit can survive. `apply` writes a
+ *  NEW versioned CV row via Epic 4 versioning, re-derives the structured
+ *  Profile, and fires the Epic 5 / Epic 6 stale hooks. No new egress beyond
+ *  OpenRouter — the one-time Epic 4 "what is sent" disclosure (shared
+ *  across the app) gates the first LLM send. */
+interface StarEnrichApi {
+  analyze: () => Promise<StarEnrichAnalyzeResult>;
+  questions: (
+    input: StarEnrichQuestionsInput,
+  ) => Promise<StarEnrichQuestionsResult>;
+  propose: (input: StarEnrichProposeInput) => Promise<StarEnrichProposeResult>;
+  apply: (input: StarEnrichApplyInput) => Promise<StarEnrichApplyResult>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
@@ -918,4 +1084,5 @@ interface Window {
   starPdf?: StarPdfApi;
   starWord?: StarWordApi;
   starEval?: StarEvalApi;
+  starEnrich?: StarEnrichApi;
 }

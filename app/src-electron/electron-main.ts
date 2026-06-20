@@ -50,6 +50,15 @@ import {
   registerExtractVisibleIpc,
   EXTRACT_VISIBLE_PROGRESS_CHANNEL,
 } from './extractVisibleJobIpc';
+import { registerEnrichmentIpc } from './enrichmentIpc';
+import { buildWeakBulletLlm } from './weakBulletAnalyzer';
+import { buildMetricQuestionLlm } from './metricQuestionGenerator';
+import type {
+  CvVersionWriter,
+  EnrichmentBaseCvRecord,
+  EnrichmentNewCvRecord,
+} from './enrichmentApply';
+import { randomUUID } from 'node:crypto';
 import { createEvalReportsStore } from './evalReports';
 import { createWebResearchSettingsStore } from './webResearchSettings';
 import { createWebResearch } from './webResearch';
@@ -625,6 +634,173 @@ function createWindow() {
     scoreOne: (sourceId: string) => scoringRunner.rescoreOne(sourceId),
     emitProgress: (e) =>
       mainWindow?.webContents.send(EXTRACT_VISIBLE_PROGRESS_CHANNEL, e),
+  });
+
+  // Wire the CV-Enrichment IPC (ENRICH-005 / Epic 13). Four channels that
+  // wire the ENRICH-001..004 backend into the renderer (`enrich:analyze` /
+  // `enrich:questions` / `enrich:propose` / `enrich:apply`). The three LLM
+  // passes (weak-bullet ranking, metric-discovery refinement, bullet rewriting)
+  // all reuse the SAME OpenRouter egress used by the rest of the app — this
+  // ticket opens no new egress. The Epic 4 one-time "what is sent" disclosure
+  // is the renderer's responsibility and is reused unchanged for the first
+  // LLM send.
+  //
+  // ENRICH-004 apply re-derives the structured profile and writes a NEW
+  // versioned CV row; we provide a thin `CvVersionWriter` that wraps the
+  // shared star.db handle so the apply path stays free of direct DB coupling.
+  const cvVersionWriter: CvVersionWriter = (() => {
+    const latestStmt = sitesDb.prepare(
+      'SELECT id, profile_id, version, parsed_text, parsed_fields, storage_path FROM cv WHERE profile_id = ? ORDER BY version DESC LIMIT 1',
+    );
+    const maxVersionStmt = sitesDb.prepare(
+      'SELECT MAX(version) AS max_version FROM cv WHERE profile_id = ?',
+    );
+    const insertStmt = sitesDb.prepare(
+      `INSERT INTO cv (
+         id, profile_id, file_name, mime, storage_path,
+         parsed_text, parsed_fields, version, confidence, uploaded_at
+       ) VALUES (
+         @id, @profile_id, @file_name, @mime, @storage_path,
+         @parsed_text, @parsed_fields, @version, @confidence, @uploaded_at
+       )`,
+    );
+    function parseFields(s: unknown): Record<string, unknown> | null {
+      if (typeof s !== 'string' || !s) return null;
+      try {
+        return JSON.parse(s) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    }
+    return {
+      latest: (profileId?: string): EnrichmentBaseCvRecord | null => {
+        const pid = profileId ?? 'singleton';
+        const rows = (latestStmt.all?.(pid) ?? []) as Array<{
+          id: string;
+          profile_id: string;
+          version: number;
+          parsed_text: string | null;
+          parsed_fields: string | null;
+          storage_path: string;
+        }>;
+        const row = rows[0];
+        if (!row) return null;
+        return {
+          id: row.id,
+          profileId: row.profile_id,
+          version: row.version,
+          parsedFields: parseFields(row.parsed_fields),
+          parsedText: row.parsed_text ?? '',
+        };
+      },
+      create: (input): EnrichmentNewCvRecord => {
+        const rows = (maxVersionStmt.all?.(input.profileId) ?? []) as Array<{
+          max_version: number | null;
+        }>;
+        const version = (rows[0]?.max_version ?? 0) + 1;
+        const id = randomUUID();
+        const baseRows = (latestStmt.all?.(input.profileId) ?? []) as Array<{
+          storage_path: string;
+        }>;
+        const storagePath = baseRows[0]?.storage_path ?? `cv/${input.profileId}/derived-${id}`;
+        const uploadedAt = Date.now();
+        insertStmt.run({
+          id,
+          profile_id: input.profileId,
+          file_name: `enriched-v${version}.md`,
+          mime: 'pdf',
+          storage_path: storagePath,
+          parsed_text: input.parsedText,
+          parsed_fields: JSON.stringify(input.parsedFields),
+          version,
+          confidence: null,
+          uploaded_at: uploadedAt,
+        });
+        return {
+          id,
+          profileId: input.profileId,
+          version,
+          parsedText: input.parsedText,
+          parsedFields: input.parsedFields,
+          uploadedAt,
+        };
+      },
+    };
+  })();
+
+  registerEnrichmentIpc(ipcMain, {
+    cvStore: cvStoreWithReviewStaleHook,
+    getProfile: () => profileStore.get(),
+    getApiKey: () => apiKeyStore.getRawKey(),
+    getDefaultModel: () => {
+      const models = preferredModelsStore.list();
+      const def = models.find((m) => m.isDefault);
+      return def?.slug ?? null;
+    },
+    cvVersionWriter,
+    profileWriter: {
+      save: (input) => {
+        // applyEnrichment passes a partial profile; the singleton store's
+        // save merges by field, so nullish fields don't clobber prior values.
+        profileStore.save(input as Parameters<typeof profileStore.save>[0]);
+      },
+    },
+    staleHooks: {
+      markScoresStale: () => {
+        const ids = matchScoresStore.list().map((s) => s.sourceId);
+        if (ids.length > 0) matchScoresStore.markStale(ids);
+      },
+      markReviewsStale: () => markAllReviewsStale(matchReviewsStore, jobsStore),
+      markEvalReportsStale: () =>
+        markAllEvalReportsStale(evalReportsStore, jobsStore),
+      markTailoredDocsStale: () =>
+        markAllTailoredDocsStale(tailoredDocsStore, jobsStore),
+    },
+    buildWeakBulletLlm: ({ apiKey, model }) =>
+      buildWeakBulletLlm({ apiKey, model }),
+    buildMetricQuestionLlm: ({ apiKey, model }) =>
+      buildMetricQuestionLlm({ apiKey, model }),
+    buildEnrichmentLlm: async ({ apiKey, model }) => {
+      const built = await buildTailorLlm({ apiKey, model });
+      if (!built.ok) {
+        const err = built as unknown as { error: string };
+        throw new Error(err.error);
+      }
+      // Adapt the structured-output LLM into the ENRICH-003 EnrichmentLLM
+      // shape (single `rewriteBullet` call). The rewriter is constrained by
+      // the answer-provenance gate downstream — fabricated numbers are
+      // stripped before the proposal reaches the user.
+      const structured = built.llm as unknown as {
+        withStructuredOutput<T>(
+          schema: T,
+          opts?: { name?: string },
+        ): { invoke(input: unknown): Promise<{ rewritten?: string }> };
+      };
+      const { z } = await import('zod');
+      const RewriteSchema = z.object({ rewritten: z.string() });
+      return {
+        rewriteBullet: async ({ originalText, answerValues, path }) => {
+          const prompt = [
+            'You are a CV bullet rewriter. Rewrite the SINGLE bullet using ONLY:',
+            ' - words already in the original bullet, and',
+            ' - the user-supplied real numbers listed below.',
+            'DO NOT invent numbers, scale, scope, employers, dates, identities, or skills.',
+            `path: ${path}`,
+            `original: ${originalText}`,
+            `answers: ${answerValues.join(' | ')}`,
+            'Return ONLY the rewritten bullet text.',
+          ].join('\n');
+          try {
+            const out = await structured
+              .withStructuredOutput(RewriteSchema, { name: 'EnrichmentRewrite' })
+              .invoke(prompt);
+            return (out?.rewritten ?? '').toString();
+          } catch {
+            return '';
+          }
+        },
+      };
+    },
   });
 
   // Wire the PDF-export IPC (PDFEX-004 / Epic 8 §7). Compiles the persisted
