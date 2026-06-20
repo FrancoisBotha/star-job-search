@@ -129,6 +129,37 @@
             </button>
           </div>
 
+          <!-- DEAL-003 — Dealbreakers section. Hard exclusions: matches are
+               flagged on the Job Board (never hidden) so the user stays
+               in control. Empty input clears the rule. -->
+          <div class="eyebrow lbl">Dealbreakers</div>
+          <q-input
+            :model-value="dealbreakerKeywordsText"
+            outlined dense class="field"
+            placeholder="contract, on-site only, senior manager"
+            label="Keyword dealbreakers"
+            hint="Comma-separated. Job title / description matches are flagged."
+            @update:model-value="onDealbreakerKeywordsChange"
+          />
+          <q-input
+            :model-value="dealbreakerCompaniesText"
+            outlined dense class="field"
+            placeholder="Acme Corp, Initech"
+            label="Company dealbreakers"
+            hint="Comma-separated company names."
+            @update:model-value="onDealbreakerCompaniesChange"
+          />
+          <q-input
+            :model-value="store.profile?.dealbreakerSalaryMin ?? null"
+            outlined dense type="number" class="field"
+            placeholder="0"
+            label="Minimum salary (hard floor)"
+            @update:model-value="onDealbreakerSalaryMinChange"
+          />
+          <p class="dealbreaker-hint">
+            Matches are flagged on the Job Board — they're still shown, not hidden, so you stay in control.
+          </p>
+
           <!-- minimum-scorable gate -->
           <div class="gate" :class="{ 'gate--ok': store.isScorable }">
             <template v-if="store.isScorable">
@@ -260,6 +291,23 @@ const cvTags = computed<string[]>(() => {
 
 const firstPortfolioLink = computed(() => store.profile?.links?.[0] ?? '');
 
+// DEAL-003 — render the persisted string[] back as a comma-separated
+// input value so the user sees the rules in the same shape they typed.
+const dealbreakerKeywordsText = computed(
+  () => (store.profile?.dealbreakerKeywords ?? []).join(', '),
+);
+const dealbreakerCompaniesText = computed(
+  () => (store.profile?.dealbreakerCompanies ?? []).join(', '),
+);
+
+function splitDealbreakerList(value: string | number | null): string[] {
+  if (typeof value !== 'string' || !value.trim()) return [];
+  return value
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 const missingFieldsCopy = computed(() => {
   const parts = store.missingScoringFields.map(
     (f) => PROFILE_FIELD_LABELS[f as string] ?? (f as string),
@@ -376,6 +424,21 @@ async function onSalaryCurrencyChange(value: string | number | null) {
   await store.saveProfile({ salaryCurrency: typeof value === 'string' && value ? value : 'GBP' });
 }
 
+async function onDealbreakerKeywordsChange(value: string | number | null) {
+  await store.saveProfile({ dealbreakerKeywords: splitDealbreakerList(value) });
+}
+
+async function onDealbreakerCompaniesChange(value: string | number | null) {
+  await store.saveProfile({ dealbreakerCompanies: splitDealbreakerList(value) });
+}
+
+async function onDealbreakerSalaryMinChange(value: string | number | null) {
+  const num = typeof value === 'number' ? value : value === '' || value == null ? null : Number(value);
+  await store.saveProfile({
+    dealbreakerSalaryMin: Number.isFinite(num as number) ? (num as number) : null,
+  });
+}
+
 async function onWorkModeChange(mode: 'Remote' | 'Hybrid' | 'On-site') {
   await store.setWorkMode(mode);
 }
@@ -452,6 +515,7 @@ async function confirmClear() {
 .actions { display: flex; gap: 10px; }
 .ghost { color: var(--text-2); border-color: var(--border-strong); }
 .stale { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.dealbreaker-hint { font-size: 12px; color: var(--muted); margin: -4px 0 18px; line-height: 1.5; }
 
 .rail { position: sticky; top: 0; }
 .strength { border: 1px solid var(--hair); border-radius: 12px; padding: 18px; background: #fff; margin-bottom: 14px; }
