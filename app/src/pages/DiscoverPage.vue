@@ -56,6 +56,58 @@
           >
             <span class="scan-dot" />AI Extract
           </button>
+          <!-- XJOB-004 AC1 — single-job "Extract this job" control.
+               Sibling button (NOT a mode of the bulk AI Extract). Disabled
+               with a clear reason via :title when key or default model is
+               missing — same gate the main-side IPC enforces, mirrored here
+               for defence-in-depth. -->
+          <button
+            type="button"
+            class="chrome__extract chrome__extract--single"
+            :disabled="!store.canExtractVisibleJob || store.isExtractingVisible"
+            :title="store.canExtractVisibleJob ? 'Extract the job posting open in this tab' : store.extractVisibleDisabledReason"
+            @click="onExtractThisJob"
+          >
+            <span class="scan-dot" />Extract this job
+          </button>
+        </div>
+
+        <!-- XJOB-004 AC2 — single-job extract status chip. Renders the
+             extracting state, success line ("Added: {title} — {company}"),
+             "no posting" empty state, and code-driven error message. -->
+        <div
+          v-if="store.extractVisibleStatus !== 'idle'"
+          class="progress progress--single"
+          :class="{ 'progress--error': store.extractVisibleStatus === 'error' || store.extractVisibleStatus === 'no_posting' }"
+          role="status"
+          aria-live="polite"
+        >
+          <span v-if="store.extractVisibleStatus === 'extracting'">
+            <span class="scan-dot" />Extracting this job…
+          </span>
+          <span
+            v-else-if="store.extractVisibleStatus === 'success' && store.extractVisibleLastJob"
+            class="progress__success"
+          >
+            Added: {{ store.extractVisibleLastJob.title ?? 'Untitled role' }} — {{ store.extractVisibleLastJob.company ?? 'Unknown company' }}
+            <button type="button" class="progress__dismiss" aria-label="Dismiss" @click="store.resetExtractVisible">×</button>
+          </span>
+          <span
+            v-else-if="store.extractVisibleStatus === 'no_posting'"
+            class="progress__error"
+            role="alert"
+          >
+            Couldn't find a job posting on this page. Open a job's detail view and try again.
+            <button type="button" class="progress__dismiss" aria-label="Dismiss" @click="store.resetExtractVisible">×</button>
+          </span>
+          <span
+            v-else-if="store.extractVisibleStatus === 'error'"
+            class="progress__error"
+            role="alert"
+          >
+            {{ extractVisibleMessage }}
+            <button type="button" class="progress__dismiss" aria-label="Dismiss" @click="store.resetExtractVisible">×</button>
+          </span>
         </div>
 
         <div
@@ -87,6 +139,40 @@
 
     </template>
 
+    <!-- XJOB-004 AC3 — one-time "what is sent" disclosure (Epic 4 / FR-005).
+         Reuses the existing reviewDisclosureAcknowledged flag (same copy as
+         AI Match Review + Tailoring) so the first send from the Discover
+         chrome shares the user's existing acknowledgement state — no new
+         disclosure is introduced. Plain DOM (not q-dialog) so the chrome
+         stays opinionated about NOT pulling in new Quasar components. -->
+    <div
+      v-if="showExtractDisclosure"
+      class="disclosure-backdrop"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="extract-disclosure-title"
+    >
+      <div class="disclosure">
+        <div id="extract-disclosure-title" class="disclosure__title font-serif">
+          What we send to your AI provider
+        </div>
+        <p class="disclosure__body">
+          Star will send the <strong>rendered text</strong> of the job posting open in this
+          tab to your configured OpenRouter model so it can structure the title, company,
+          location, salary, and description into a board entry. The page itself stays on
+          this device. Nothing else is sent.
+        </p>
+        <p class="disclosure__body">
+          This is the same one-time "what is sent" disclosure used by AI Match Review and
+          Tailoring. Accepting once unlocks all three.
+        </p>
+        <div class="disclosure__actions">
+          <button type="button" class="disclosure__btn" @click="cancelExtractDisclosure">Cancel</button>
+          <button type="button" class="disclosure__btn disclosure__btn--primary" @click="acknowledgeExtractDisclosure">Send &amp; continue</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Empty state: shown when no ACTIVE sites exist — either none are
          configured, or every saved site has its Active toggle off. -->
     <section v-else class="empty-panel">
@@ -106,6 +192,30 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
 
 const store = useAppStore();
+
+/** XJOB-004 AC3 — disclosure dialog visibility (renderer-local). The
+ *  acknowledgement itself lives in the store + localStorage so it is
+ *  shared with AI Match Review + Tailoring. */
+const showExtractDisclosure = ref(false);
+
+/** XJOB-004 AC2 — stable code-driven copy for the "Extract this job"
+ *  error states. NO_POSTING has its own dedicated empty-state line in
+ *  the template; everything else surfaces here. */
+const EXTRACT_VISIBLE_MESSAGES: Record<string, string> = {
+  NO_API_KEY: 'No OpenRouter API key saved. Add one in Settings to enable Extract this job.',
+  NO_DEFAULT_MODEL: 'No default model selected. Pick a preferred model in Settings.',
+  NO_VIEW: 'No browser tab is open. Pick a site tab above and load a job posting.',
+  CAPTURE_FAILED: "Couldn't read the page text. Reload the page and try again.",
+  NO_INPUT: "Couldn't read any text from the page. Reload and try again.",
+  MODEL_NOT_CAPABLE: 'Your selected model does not support structured output. Choose a function-calling–capable model in Settings.',
+  LLM_ERROR: 'The model call failed. Check your connection and try again.',
+};
+
+const extractVisibleMessage = computed(() => {
+  const code = store.extractVisibleErrorCode;
+  if (!code) return store.extractVisibleError ?? 'Extract failed.';
+  return EXTRACT_VISIBLE_MESSAGES[code] ?? store.extractVisibleError ?? 'Extract failed.';
+});
 
 const selectedSiteId = ref<string | null>(null);
 const activeUrl = ref('');
@@ -181,6 +291,51 @@ async function onExtract() {
   await store.triggerExtract();
 }
 
+/**
+ * XJOB-004 AC2 / AC3 — drive the single-job "Extract this job" action.
+ * The button is also disabled by the store gate (`canExtractVisibleJob`)
+ * so reaching this handler means key + default model are present.
+ *
+ * Flow:
+ *   1. If the user has not yet acknowledged the existing "what is sent"
+ *      disclosure, show the dialog instead of calling the bridge — the
+ *      same gate AI Match Review + Tailoring use (no new disclosure copy).
+ *   2. Otherwise call `store.extractVisibleJob()`; on success surface the
+ *      "Added: {title} — {company}" toast. The store has already pushed
+ *      the new JobRecord into `state.jobs`, so the board refreshes
+ *      reactively.
+ */
+async function onExtractThisJob() {
+  if (store.isExtractingVisible) return;
+  if (!store.reviewDisclosureAcknowledged) {
+    store.hydrateReviewDisclosure();
+    if (!store.reviewDisclosureAcknowledged) {
+      showExtractDisclosure.value = true;
+      return;
+    }
+  }
+  await runExtractThisJob();
+}
+
+async function runExtractThisJob() {
+  // The success line itself is rendered inline in the chrome chip
+  // (`Added: {title} — {company}`) bound to store.extractVisibleLastJob, so
+  // the action only needs to fire-and-forget here. No notification system is
+  // pulled in — the chrome stays opinionated about not introducing new
+  // Quasar components beyond the existing q-select.
+  await store.extractVisibleJob();
+}
+
+function cancelExtractDisclosure() {
+  showExtractDisclosure.value = false;
+}
+
+async function acknowledgeExtractDisclosure() {
+  showExtractDisclosure.value = false;
+  store.acknowledgeReviewDisclosure();
+  await runExtractThisJob();
+}
+
 function applyBounds() {
   const el = surfaceEl.value;
   if (!el || typeof window === 'undefined' || !window.starBrowser) return;
@@ -223,6 +378,7 @@ const onWindowResize = () => applyBounds();
 
 onMounted(async () => {
   await store.hydrateSites();
+  store.hydrateReviewDisclosure();
   store.subscribeExtractProgress();
   if (typeof window !== 'undefined' && window.starBrowser) {
     await window.starBrowser.create();
@@ -322,6 +478,39 @@ onBeforeUnmount(async () => {
   font: 500 12px/1 var(--font-mono);
   &--error { color: var(--text-2); }
   &__error { color: var(--text-2); }
+  &__success { color: var(--accent); }
+  &__dismiss {
+    margin-left: 10px; background: transparent; border: 0; padding: 0 4px;
+    cursor: pointer; color: inherit; font: 500 14px/1 var(--font-mono);
+    &:hover { color: var(--text-2); }
+  }
+}
+
+.disclosure-backdrop {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 24px;
+}
+.disclosure {
+  padding: 22px; max-width: 460px; width: 100%;
+  background: var(--bg); border: 1px solid var(--hair); border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+.disclosure__title { font-size: 20px; margin-bottom: 10px; color: var(--text-strong); }
+.disclosure__body { font-size: 13px; color: var(--text-2); margin: 0 0 12px; line-height: 1.5; }
+.disclosure__actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.disclosure__btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 14px;
+  background: transparent; color: var(--text-2);
+  border: 1px solid var(--hair); border-radius: 8px;
+  font: 500 13px/1 var(--font-ui); cursor: pointer;
+  &:hover { color: var(--text-strong); border-color: var(--text-2); }
+  &--primary {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+    &:hover { color: #fff; opacity: 0.92; }
+  }
 }
 
 .surface { flex: 1; position: relative; min-height: 0; background: var(--bg); }

@@ -413,6 +413,28 @@ interface AppState {
    * → gate-filter → refine → rescore.
    */
   tailorEngineProgress: Record<string, StarTailorEngineProgressEvent>;
+  /**
+   * Single-job "Extract this job" state machine (XJOB-004 / Epic 11).
+   * Drives the Discover chrome control:
+   *   - `idle`        — resting state.
+   *   - `extracting`  — the `ai:extractVisible` call is in flight.
+   *   - `success`     — the foreground page yielded a job; it is now on the
+   *                     board and `extractVisibleLastJob` carries the
+   *                     persisted record for the "Added: {title} — {company}"
+   *                     toast.
+   *   - `no_posting`  — the page has no recognisable job posting (homepage /
+   *                     404 / login wall); shown as a clear empty state in
+   *                     the chrome, never a generic error.
+   *   - `error`       — any other failure; `extractVisibleErrorCode` carries
+   *                     the stable [[StarExtractVisibleErrorCode]] so the UI
+   *                     can render a code-specific message.
+   */
+  extractVisibleStatus: 'idle' | 'extracting' | 'success' | 'no_posting' | 'error';
+  extractVisibleErrorCode: StarExtractVisibleErrorCode | null;
+  extractVisibleError: string | null;
+  /** The job persisted by the most recent successful run (XJOB-004 AC2).
+   *  Drives the "Added: {title} — {company}" success copy. */
+  extractVisibleLastJob: JobRecord | null;
 }
 
 export const useAppStore = defineStore('app', {
@@ -459,6 +481,10 @@ export const useAppStore = defineStore('app', {
     tailorEngineProposals: {},
     tailorEngineStates: {},
     tailorEngineProgress: {},
+    extractVisibleStatus: 'idle',
+    extractVisibleErrorCode: null,
+    extractVisibleError: null,
+    extractVisibleLastJob: null,
   }),
 
   getters: {
@@ -720,6 +746,35 @@ export const useAppStore = defineStore('app', {
       (state) =>
       (sourceId: string): PdfExportRecord | null =>
         state.pdfExportRecords[sourceId] ?? null,
+    /**
+     * True when the Discover chrome's "Extract this job" control should be
+     * enabled (XJOB-004 AC1). The single-call structured-output run needs
+     * both an OpenRouter API key (Epic 2) and a default model selected
+     * (LLM-003) — the same gate the main-side IPC enforces via
+     * NO_API_KEY / NO_DEFAULT_MODEL. Mirrored here so the button can be
+     * disabled with a clear reason BEFORE the click; defence-in-depth, not
+     * the only check.
+     */
+    canExtractVisibleJob: (state): boolean =>
+      state.apiKeyStatus.present &&
+      state.preferredModels.some((m) => m.isDefault),
+    /**
+     * Stable human copy explaining why "Extract this job" is disabled
+     * (XJOB-004 AC1). Bound to the button's `title` attribute so the user
+     * sees the reason on hover — never a silent disable.
+     */
+    extractVisibleDisabledReason(): string {
+      if (!this.apiKeyStatus.present) {
+        return 'Add an OpenRouter API key in Settings to enable Extract this job.';
+      }
+      if (!this.preferredModels.some((m) => m.isDefault)) {
+        return 'Pick a default model in Settings to enable Extract this job.';
+      }
+      return '';
+    },
+    /** Convenience flag for the in-flight state (XJOB-004 AC2). */
+    isExtractingVisible: (state): boolean =>
+      state.extractVisibleStatus === 'extracting',
   },
 
   actions: {
@@ -1796,6 +1851,88 @@ export const useAppStore = defineStore('app', {
         };
       }
       return result;
+    },
+    /**
+     * Run the single-call "Extract this job" surface for the foreground
+     * Discover tab (XJOB-004 / Epic 11). Drives `ai:extractVisible` —
+     * captures the visible posting, runs ONE structured-output LLM call,
+     * persists the row with `source: 'manual'` provenance, and triggers
+     * the Epic 5 deterministic rescore on the main side.
+     *
+     * The store maps the tagged-union result onto a small state machine
+     * (`extractVisibleStatus`) so the UI can render extracting / success /
+     * no_posting / error without parsing exception text. On success the
+     * persisted JobRecord is appended to `state.jobs` so the board updates
+     * reactively (AC3 — "the board refreshes reactively after a successful
+     * add") and is pinned on `extractVisibleLastJob` so the success toast
+     * can read "Added: {title} — {company}" without a separate fetch.
+     *
+     * **Disclosure gate (AC3 / FR-005).** The first send is gated behind
+     * the existing Epic 4 "what is sent" disclosure — when
+     * [[reviewDisclosureAcknowledged]] is false this action no-ops without
+     * reaching the bridge so the caller can show the disclosure dialog and
+     * call [[acknowledgeReviewDisclosure]] before retrying. No new
+     * disclosure copy is introduced.
+     */
+    async extractVisibleJob(): Promise<StarExtractVisibleResult | undefined> {
+      const bridge =
+        typeof window !== 'undefined' ? window.starExtractVisible : undefined;
+      if (!bridge) return undefined;
+      if (!this.reviewDisclosureAcknowledged) {
+        this.hydrateReviewDisclosure();
+        if (!this.reviewDisclosureAcknowledged) return undefined;
+      }
+      this.extractVisibleStatus = 'extracting';
+      this.extractVisibleErrorCode = null;
+      this.extractVisibleError = null;
+      try {
+        const result = await bridge.extract();
+        if (result.ok) {
+          this.extractVisibleStatus = 'success';
+          this.extractVisibleLastJob = result.job as JobRecord;
+          // AC3 — reactive board refresh. Replace any existing row with the
+          // same sourceId (re-extracting the same posting is allowed and
+          // refreshes the cached row) and otherwise prepend the new one so
+          // the visible/topMatches selectors pick it up on the next tick.
+          const existing = this.jobs.findIndex(
+            (j) => j.sourceId === result.job.sourceId,
+          );
+          if (existing >= 0) {
+            this.jobs.splice(existing, 1, result.job as JobRecord);
+          } else {
+            this.jobs.push(result.job as JobRecord);
+          }
+        } else if (result.code === 'NO_POSTING') {
+          this.extractVisibleStatus = 'no_posting';
+          this.extractVisibleErrorCode = result.code;
+          this.extractVisibleError = result.error;
+        } else {
+          this.extractVisibleStatus = 'error';
+          this.extractVisibleErrorCode = result.code;
+          this.extractVisibleError = result.error;
+        }
+        return result;
+      } catch (err) {
+        this.extractVisibleStatus = 'error';
+        this.extractVisibleErrorCode = 'LLM_ERROR';
+        this.extractVisibleError =
+          err instanceof Error ? err.message : 'extract failed';
+        return {
+          ok: false,
+          code: 'LLM_ERROR',
+          error: this.extractVisibleError,
+        };
+      }
+    },
+    /**
+     * Reset the "Extract this job" state machine back to idle (XJOB-004).
+     * Used by the Discover chrome to dismiss the success / no-posting /
+     * error chip without re-running the extraction.
+     */
+    resetExtractVisible() {
+      this.extractVisibleStatus = 'idle';
+      this.extractVisibleErrorCode = null;
+      this.extractVisibleError = null;
     },
     /**
      * Open the saved PDF's containing folder via
