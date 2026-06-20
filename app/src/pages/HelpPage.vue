@@ -146,6 +146,28 @@
         </div>
       </div>
 
+      <!-- Exporting to PDF -->
+      <h2 class="section-title sec">Exporting to PDF</h2>
+      <p class="lead">
+        PDF export turns the current tailored draft into a polished, recruiter-grade PDF
+        without leaving the app. It is <strong>render-only</strong> — Star compiles the draft
+        you already see on screen and never edits the wording — and runs <strong>fully offline</strong>
+        through a bundled LaTeX engine: no network call, no OpenRouter round-trip, no external
+        toolchain to install. Every exported PDF is <strong>ATS-targeted</strong> by construction:
+        <strong>single-column</strong> layout, <strong>selectable text</strong> (never a flattened
+        image), <strong>embedded fonts</strong> so the document renders identically on any reader,
+        and a <strong>locale-aware page size</strong> — Letter for en-US, A4 everywhere else.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in pdfExportSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- FAQ -->
       <h2 class="section-title sec">Frequently asked</h2>
       <div class="card card--rows">
@@ -375,6 +397,41 @@ const tailorSteps = [
   {
     title: 'Stale drafts and Regenerate',
     body: 'Drafts cache per job and survive restart. When you edit your CV or Profile, or the underlying job is re-extracted, Star marks the draft as may be out of date and surfaces a Regenerate button — a fresh structured call against the current inputs. If something goes wrong (no key, no default model, model not capable of structured output, rate limit or network error) the banner explains exactly which code fired and offers Try again when it makes sense.',
+  },
+];
+
+const pdfExportSteps = [
+  {
+    title: 'Find Export PDF in the Tailor view',
+    body: 'The Export PDF button sits in the top bar of the Tailor view and is visible on both the Tailored CV tab and the Cover-letter tab — whichever draft you have open is what gets rendered. The button is disabled until a tailored draft exists, so generate one first if you have not already.',
+  },
+  {
+    title: 'Pick Letter or A4',
+    body: 'Next to Export PDF, a Letter / A4 segmented switch chooses the page size. Star defaults by locale — Letter for en-US, A4 everywhere else — and remembers your choice for the session. Switching the toggle changes the page size of the next export; nothing in the draft is re-rendered until you press Export PDF again.',
+  },
+  {
+    title: 'Save the PDF where you want it',
+    body: 'Pressing Export PDF opens a save dialog so you choose where the file lands — Star never writes the PDF without asking, and never uploads it anywhere. The button shows a progress spinner while the bundled LaTeX engine compiles, then a toast confirms the saved path.',
+  },
+  {
+    title: 'Reveal in folder',
+    body: 'The success toast carries a Reveal in folder action that opens the saved PDF in Finder / Explorer with the file selected, so you can attach it to an application without digging through your filesystem. The provenance of every export (model, date, page size, file path) is recorded locally for your reference.',
+  },
+  {
+    title: 'ATS guarantees baked into every export',
+    body: 'Every PDF Star emits is single-column, has selectable text (not a flattened image), embeds its fonts (Latin Modern) so it renders identically on any reader, and uses the locale-appropriate page size. These are guarantees of the template — there is no option that disables them — so the PDF stays machine-readable for applicant-tracking systems.',
+  },
+  {
+    title: 'Error states — compile error',
+    body: 'If the bundled LaTeX engine cannot compile the draft (rare — usually an unsupported character that slipped through normalisation), the Export PDF button reports "PDF compile failed" with the underlying engine message and offers Retry. Nothing is written to disk on a compile error, and the draft you see on screen is untouched.',
+  },
+  {
+    title: 'Error states — toolchain missing',
+    body: 'If the bundled LaTeX engine is not found on disk — for example because the app install is corrupt — Star shows "The bundled LaTeX engine was not found. Reinstall the app to restore PDF export." No external LaTeX installation is ever required, expected, or attempted; the engine is the one Star ships with.',
+  },
+  {
+    title: 'Licence and attribution',
+    body: 'The bundled LaTeX engine is Tectonic (MIT) and the embedded fonts are the Latin Modern family under the GUST Font License. The CV / cover-letter template is structurally inspired by the MIT-licensed career-ops project but contains none of its text or code. Full notices live in NOTICE.md at the repo root; if you redistribute Star Job Search, you must preserve that file.',
   },
 ];
 
