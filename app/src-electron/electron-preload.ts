@@ -151,6 +151,31 @@ contextBridge.exposeInMainWorld('starExtract', {
   },
 });
 
+// Extract-this-job bridge (XJOB-003 / Epic 11). `extract` captures the
+// FOREGROUND embedded-browser tab the user is currently viewing, runs ONE
+// structured-output LLM call against the Epic 3 JobSchema, persists the
+// resulting row with `source: 'manual'` provenance, and triggers the Epic 5
+// deterministic rescore. Returns a tagged-union result so the renderer can
+// branch on the stable error code (NO_API_KEY / NO_DEFAULT_MODEL / NO_VIEW /
+// CAPTURE_FAILED / NO_POSTING / NO_INPUT / MODEL_NOT_CAPABLE / LLM_ERROR).
+// `onProgress` subscribes to `ai:extractVisible:progress` — { phase:
+// 'extracting' } then { phase: 'result', ok, code?, sourceId? }.
+interface ExtractVisibleProgressEvent {
+  phase: 'extracting' | 'result' | string;
+  ok?: boolean;
+  code?: string;
+  sourceId?: string;
+}
+
+contextBridge.exposeInMainWorld('starExtractVisible', {
+  extract: () => ipcRenderer.invoke('ai:extractVisible'),
+  onProgress: (cb: (event: ExtractVisibleProgressEvent) => void) => {
+    const listener = (_event: unknown, evt: ExtractVisibleProgressEvent) => cb(evt);
+    ipcRenderer.on('ai:extractVisible:progress', listener);
+    return () => ipcRenderer.removeListener('ai:extractVisible:progress', listener);
+  },
+});
+
 // Job-board bridge (EXTR-006). `list` reads persisted jobs (optional status
 // filter), `setStatus` flips a posting's status, `open` navigates the
 // embedded Discover browser to a URL (used by job-detail click-throughs).

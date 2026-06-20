@@ -42,6 +42,10 @@ import {
   type TailorEngineProgressEvent,
 } from './tailorEngineIpc';
 import {
+  registerExtractVisibleIpc,
+  EXTRACT_VISIBLE_PROGRESS_CHANNEL,
+} from './extractVisibleJobIpc';
+import {
   createScoringRunner,
   isScoringRelevantProfileChange,
   registerScoringIpc,
@@ -470,6 +474,35 @@ function createWindow() {
     },
     rescore: (sourceId: string) => scoringRunner.rescoreOne(sourceId),
     emitProgress: emitTailorEngineProgress,
+  });
+
+  // Wire the Extract-this-job IPC (XJOB-003 / Epic 11). Captures the
+  // FOREGROUND embedded-browser tab (XJOB-001), runs ONE structured-output
+  // LLM call against the Epic 3 JobSchema (XJOB-002), persists the row with
+  // `source: 'manual'` provenance, and triggers the SAME Epic 5
+  // deterministic rescore used by the bulk extractor (FR-006 / NFR-002).
+  // Reuses the same OpenRouter egress + structured-output LLM builder as the
+  // Epic 3 bulk extractor — no new network egress.
+  registerExtractVisibleIpc(ipcMain, {
+    jobsStore,
+    getVisibleTarget: () => jobBrowser?.view?.webContents,
+    getApiKey: () => apiKeyStore.getRawKey(),
+    getDefaultModel: () => {
+      const models = preferredModelsStore.list();
+      const def = models.find((m) => m.isDefault);
+      return def?.slug ?? null;
+    },
+    buildLlm: async ({ apiKey, model }) => {
+      const built = await buildTailorLlm({ apiKey, model });
+      if (!built.ok) {
+        const err = built as unknown as { error: string };
+        throw new Error(err.error);
+      }
+      return built.llm;
+    },
+    scoreOne: (sourceId: string) => scoringRunner.rescoreOne(sourceId),
+    emitProgress: (e) =>
+      mainWindow?.webContents.send(EXTRACT_VISIBLE_PROGRESS_CHANNEL, e),
   });
 
   // Wire the PDF-export IPC (PDFEX-004 / Epic 8 §7). Compiles the persisted

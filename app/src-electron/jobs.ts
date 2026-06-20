@@ -30,6 +30,12 @@ export interface JobRecord {
   postedAt?: number | null;
   fetchedAt: number;
   status?: string;
+  /** XJOB-003 AC3: provenance of how the row entered the store. Defaults to
+   *  'crawl' (the bulk Epic 3 agentic extractor). Rows captured by the Epic 11
+   *  "Extract this job" surface — a single user-driven extract of the open
+   *  posting — are marked 'manual'. Additive + optional so existing callers
+   *  (and existing rows on already-migrated DBs) stay valid. */
+  source?: 'crawl' | 'manual';
 }
 
 export interface SiteProfile {
@@ -145,7 +151,8 @@ const CREATE_JOBS_TABLE_SQL = `
     salary      TEXT,
     posted_at   INTEGER,
     fetched_at  INTEGER NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'new'
+    status      TEXT NOT NULL DEFAULT 'new',
+    source      TEXT NOT NULL DEFAULT 'crawl'
   )
 `;
 
@@ -154,6 +161,13 @@ const CREATE_JOBS_TABLE_SQL = `
 // error when the column already exists — that path is the no-op success case
 // and is swallowed; any other error is left to bubble (real schema problem).
 const ADD_SALARY_COLUMN_SQL = `ALTER TABLE jobs ADD COLUMN salary TEXT`;
+
+// XJOB-003 AC3: additive, guarded migration so DBs created before the
+// "Extract this job" surface keep loading. Default 'crawl' so every existing
+// row reads as crawler-imported (which is what they were). 'manual' marks
+// rows captured by the Epic 11 single-job extractor. Same swallow-duplicate
+// pattern as the salary migration above.
+const ADD_SOURCE_COLUMN_SQL = `ALTER TABLE jobs ADD COLUMN source TEXT NOT NULL DEFAULT 'crawl'`;
 
 const CREATE_SITE_PROFILES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS site_profiles (
@@ -176,6 +190,7 @@ interface JobRow {
   posted_at: number | null;
   fetched_at: number;
   status: string;
+  source: string;
 }
 
 interface SiteProfileRow {
@@ -198,6 +213,7 @@ function rowToJob(row: JobRow): JobRecord {
     postedAt: row.posted_at,
     fetchedAt: row.fetched_at,
     status: row.status,
+    source: (row.source === 'manual' ? 'manual' : 'crawl'),
   };
 }
 
@@ -230,13 +246,20 @@ export function createJobsStore(db: JobsDatabaseLike): JobsStore {
     const msg = err instanceof Error ? err.message : String(err);
     if (!/duplicate column name/i.test(msg)) throw err;
   }
+  // XJOB-003 AC3: idempotent additive migration for the `source` column.
+  try {
+    db.exec(ADD_SOURCE_COLUMN_SQL);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/duplicate column name/i.test(msg)) throw err;
+  }
 
   const knownStmt = db.prepare('SELECT source_id FROM jobs');
   const insertStmt = db.prepare(
-    'INSERT OR IGNORE INTO jobs (source_id, hostname, url, title, company, location, description, salary, posted_at, fetched_at, status) VALUES (@source_id, @hostname, @url, @title, @company, @location, @description, @salary, @posted_at, @fetched_at, @status)',
+    'INSERT OR IGNORE INTO jobs (source_id, hostname, url, title, company, location, description, salary, posted_at, fetched_at, status, source) VALUES (@source_id, @hostname, @url, @title, @company, @location, @description, @salary, @posted_at, @fetched_at, @status, @source)',
   );
   const listStmt = db.prepare(
-    'SELECT source_id, hostname, url, title, company, location, description, salary, posted_at, fetched_at, status FROM jobs ORDER BY fetched_at DESC',
+    'SELECT source_id, hostname, url, title, company, location, description, salary, posted_at, fetched_at, status, source FROM jobs ORDER BY fetched_at DESC',
   );
   const setStatusStmt = db.prepare('UPDATE jobs SET status = ? WHERE source_id = ?');
   const getProfileStmt = db.prepare(
@@ -266,6 +289,7 @@ export function createJobsStore(db: JobsDatabaseLike): JobsStore {
           posted_at: job.postedAt ?? null,
           fetched_at: job.fetchedAt,
           status: job.status ?? 'new',
+          source: job.source === 'manual' ? 'manual' : 'crawl',
         }) as { changes?: number } | undefined;
         if (result && result.changes && result.changes > 0) inserted++;
       }

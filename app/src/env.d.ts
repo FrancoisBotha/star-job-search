@@ -244,6 +244,9 @@ interface StarBoardJob {
   postedAt?: number | null;
   fetchedAt: number;
   status?: string;
+  /** XJOB-003 AC3: provenance — 'crawl' (Epic 3 agentic bulk extract,
+   *  default) or 'manual' (Epic 11 single-job extract of the open posting). */
+  source?: 'crawl' | 'manual';
 }
 
 /** Filter accepted by board:list. */
@@ -275,6 +278,45 @@ interface StarExtractApi {
   extract: () => Promise<StarExtractResult>;
   /** Subscribe to `extract:progress`. Returns an unsubscribe function. */
   onProgress: (cb: (event: StarExtractProgressEvent) => void) => () => void;
+}
+
+/** Stable failure codes returned by ai:extractVisible (XJOB-003 / Epic 11).
+ *  Mirrors `ExtractVisibleErrorCode` in src-electron/extractVisibleJobIpc.ts. */
+type StarExtractVisibleErrorCode =
+  | 'NO_API_KEY'
+  | 'NO_DEFAULT_MODEL'
+  | 'NO_VIEW'
+  | 'CAPTURE_FAILED'
+  | 'NO_POSTING'
+  | 'NO_INPUT'
+  | 'MODEL_NOT_CAPABLE'
+  | 'LLM_ERROR';
+
+type StarExtractVisibleResult =
+  | { ok: true; job: StarBoardJob }
+  | { ok: false; code: StarExtractVisibleErrorCode; error: string };
+
+/** Progress event streamed via `ai:extractVisible:progress` (XJOB-003 AC1).
+ *  One `extracting` event when the LLM call is about to start, then one
+ *  terminal `result` event with the tagged-union outcome. */
+interface StarExtractVisibleProgressEvent {
+  phase: 'extracting' | 'result' | string;
+  ok?: boolean;
+  code?: StarExtractVisibleErrorCode;
+  sourceId?: string;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the Epic 11
+ *  "Extract this job" single-call surface (XJOB-003). Captures the user's
+ *  currently-open browser tab, runs ONE structured-output LLM call, and
+ *  persists the row with `source: 'manual'` provenance. The deterministic
+ *  Epic 5 rescore is triggered automatically. */
+interface StarExtractVisibleApi {
+  extract: () => Promise<StarExtractVisibleResult>;
+  /** Subscribe to `ai:extractVisible:progress`. Returns an unsubscribe fn. */
+  onProgress: (
+    cb: (event: StarExtractVisibleProgressEvent) => void,
+  ) => () => void;
 }
 
 /** Bridge exposed by src-electron/electron-preload.ts for the job board (EXTR-006). */
@@ -739,6 +781,7 @@ interface Window {
   starModels?: StarModelsApi;
   starPreferredModels?: StarPreferredModelsApi;
   starExtract?: StarExtractApi;
+  starExtractVisible?: StarExtractVisibleApi;
   starBoard?: StarBoardApi;
   starShell?: StarShellApi;
   starScores?: StarScoresApi;
