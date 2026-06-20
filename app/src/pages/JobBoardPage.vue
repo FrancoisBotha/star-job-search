@@ -76,6 +76,16 @@
             >{{ tileSalary(j) }}</div>
           </div>
           <span class="tile__tag">{{ j.hostname }}</span>
+          <!-- DEAL-004 AC2 — ⚠ chip flags a dealbreaker hit; tooltip names
+               the matched rule/term so the user can trace exactly which
+               rule fired. Clean tiles render unchanged (AC4). -->
+          <span
+            v-if="isFlagged(j)"
+            class="tile__deal"
+            :title="dealbreakerTooltip(j)"
+            :aria-label="dealbreakerTooltip(j)"
+            data-test="dealbreaker-chip"
+          >⚠</span>
         </header>
 
         <div class="tile__score">
@@ -171,12 +181,42 @@ function isStrong(score: MatchScore | undefined): boolean {
  */
 const orderedJobs = computed<JobRecord[]>(() => {
   const orderKey = (j: JobRecord) => store.scores[j.sourceId]?.percent ?? -1;
+  // DEAL-004 AC3 — clean tiles lead, flagged tiles trail. The existing
+  // score/recency comparison is otherwise unchanged: it runs inside each
+  // group so Epic 5 ordering survives within "clean" and within "flagged".
+  const flagged = (j: JobRecord) =>
+    store.dealbreakerVerdicts[j.sourceId]?.flagged ? 1 : 0;
   return [...store.visibleJobs].sort((a, b) => {
+    const cleanDiff = flagged(a) - flagged(b);
+    if (cleanDiff !== 0) return cleanDiff;
     const diff = orderKey(b) - orderKey(a);
     if (diff !== 0) return diff;
     return b.fetchedAt - a.fetchedAt;
   });
 });
+
+/**
+ * DEAL-004 AC2 — render a precise tooltip naming the matched rule and
+ * term ("Dealbreaker: description contains 'security clearance'"). Uses
+ * the first hit; subsequent hits would just lengthen the tooltip without
+ * changing the user's decision.
+ */
+function isFlagged(j: JobRecord): boolean {
+  return !!store.dealbreakerVerdicts[j.sourceId]?.flagged;
+}
+
+function dealbreakerTooltip(j: JobRecord): string {
+  const verdict = store.dealbreakerVerdicts[j.sourceId];
+  const hit = verdict?.hits[0];
+  if (!hit) return 'Dealbreaker';
+  if (hit.rule === 'salaryMin') {
+    return `Dealbreaker: salary below ${hit.term}`;
+  }
+  if (hit.rule === 'company') {
+    return `Dealbreaker: company is '${hit.term}'`;
+  }
+  return `Dealbreaker: ${hit.field} contains '${hit.term}'`;
+}
 
 function openDetail(j: JobRecord) {
   selectedJob.value = j;
@@ -269,6 +309,16 @@ onMounted(async () => {
     display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   &__tag { font: 500 10px/1 var(--font-mono); color: var(--olive-text); background: var(--olive-tint); padding: 4px 7px; border-radius: 5px; flex-shrink: 0; }
+  &__deal {
+    font: 500 11px/1 var(--font-mono);
+    color: var(--negative, #c0392b);
+    background: rgba(192, 57, 43, 0.08);
+    border: 1px solid rgba(192, 57, 43, 0.35);
+    padding: 4px 6px;
+    border-radius: 5px;
+    flex-shrink: 0;
+    cursor: help;
+  }
   &__salary {
     font: 500 12px/1.3 var(--font-mono);
     color: var(--text-2);

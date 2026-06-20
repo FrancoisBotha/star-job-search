@@ -10,6 +10,10 @@ import type {
   MatchFactor,
   MatchScore,
 } from 'src/types/models';
+import {
+  evaluateDealbreakers,
+  type DealbreakerVerdict,
+} from 'src/utils/dealbreakers';
 
 export type { MatchFactor, MatchScore };
 
@@ -431,6 +435,28 @@ export const useAppStore = defineStore('app', {
     /** Count of jobs hidden by the `not_interested` status (EXTR-009 AC1). */
     notInterestedCount: (state): number =>
       state.jobs.filter((j) => j.status === 'not_interested').length,
+    /**
+     * DEAL-004 AC1 — apply the deterministic DEAL-001 evaluator to every
+     * job in [[visibleJobs]] using the persisted Profile rules (DEAL-002).
+     * The result is a sourceId → verdict map; verdicts are never persisted
+     * — the getter is pinia-reactive so editing a rule on the Profile
+     * screen re-flags the board on the next tick. The salary rule is a
+     * no-op when a job has no stated salary (AC4) — that invariant lives
+     * inside [[evaluateDealbreakers]] and is exercised by DEAL-001's tests.
+     */
+    dealbreakerVerdicts(): Record<string, DealbreakerVerdict> {
+      const profile = this.profile;
+      const rules = {
+        dealbreakerKeywords: profile?.dealbreakerKeywords ?? [],
+        dealbreakerCompanies: profile?.dealbreakerCompanies ?? [],
+        dealbreakerSalaryMin: profile?.dealbreakerSalaryMin ?? null,
+      };
+      const out: Record<string, DealbreakerVerdict> = {};
+      for (const j of this.visibleJobs) {
+        out[j.sourceId] = evaluateDealbreakers(j, rules);
+      }
+      return out;
+    },
     /**
      * Jobs the user has starred — the curated shortlist surfaced on the
      * Starred page. Newest-first. Starring is just a `status` flip to
