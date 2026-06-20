@@ -178,6 +178,80 @@ two existing egress paths.
   pattern from Epics 1–3 (`sites.ts` / `apiKey.ts` as the module template); new
   bridges `window.starProfile` and `window.starCv` extend the existing surface.
 
+## 3c. Tailoring Diff Engine (Epic 9)
+
+The Tailoring Diff Engine produces a job-specific CV by emitting **structured,
+grounded diffs** against the user's master CV — never a regenerated document —
+so every change is path-addressable, reviewable, and reversible. The engine lives
+entirely in main; the renderer (Epic 7) sees only proposed and applied diffs
+through the `tailor:propose` / `tailor:apply` IPC. There is no parallel LLM-only
+tailoring path.
+
+**Pipeline.** LangGraph orchestrates a five-node `StateGraph` whose edges only
+route — every gate, verifier, refine helper, and rescore call is a pure
+TypeScript function imported from TDE-001 .. TDE-004 and Epic 5:
+
+```
+extract-JD-signals  (or reuse cached Epic 6 keywords)
+  → plan/verify-skills      (3-tier verifier — existing / jd_added / supported / rejected)
+  → generate-diffs          (LLM, structured ProposedChange[])
+  → gate-filter             (four gates, see below)
+  → refine loop (bounded)   (inject keywords → strip AI phrases → master-alignment)
+  → rescore                 (Epic 5 deterministic scorer — never an LLM number)
+```
+
+**Structured grounded diffs.** The LLM emits a list of `ProposedChange` records
+typed as `{ action, path, original?, value, reason }`. The action vocabulary —
+`replace`, `append`, `reorder`, `add_skill` — is closed; arbitrary edits are
+not expressible. Every `replace` carries an `original` snapshot of the current
+text at that path, which Gate 4 uses to reject hallucinated diffs. The model is
+told (and the gates enforce) that diffs **reframe existing content into JD
+vocabulary** — they never invent facts, metrics, employers, or dates.
+
+**Four gate guarantees.** Every ProposedChange runs through four pure gates
+before it can mutate the working document:
+
+1. **Editable-path allowlist** — the target path is in the document's editable
+   set (`summary`, `experience[i].bullets[j]`, `projects[i].bullets[j]`,
+   `education[i].description`, `skills[i]`); leaf vs list shape is checked per
+   action.
+2. **Frozen-field block** — identity, contact, locations, dates, employers,
+   schools, qualifications and project names are blocked at the path level, not
+   policed in the prompt.
+3. **Path resolution** — the path must resolve on the current document state.
+4. **Original-text match** — for `replace`, the supplied `original` must match
+   the actual text at that path (case- and whitespace-insensitive). This is the
+   anti-hallucination gate that keeps the diff grounded.
+
+`add_skill` carries an additional gate against a 3-tier skill verifier
+(`skillVerifier.ts`): only skills already in the master CV, present in the JD,
+or supported by the master CV's prose are admissible. Anything else is rejected.
+
+**Epic 7 delegation.** The renderer **delegates** all engine work over IPC and
+does no validation of its own. `tailor:propose` returns the full set of gated
+diffs (plus refine warnings and the projected match-% delta) and `tailor:apply`
+applies a user-selected subset against the working document, returns the new
+document, and re-invokes Epic 5's deterministic scorer. The Epic 7 UI is the
+*only* place that decides which diffs ship — there is no auto-apply path inside
+the engine.
+
+**Strict Epic 5 rescore separation.** Match scores never flow out of the LLM.
+The engine never writes a number into the score store, and never asks the model
+for one. The rescore step calls the same deterministic Epic 5 scorer that
+backs the Job Board's star rating, against the post-apply document. This keeps
+the property that scoring is reproducible and survives OpenRouter being down.
+
+**Data model.** The engine's data shapes (TailoringDocument's editable + frozen
+path sets, the ProposedChange union, the SkillVerdict classifications, refine
+warnings) are documented in `docs/Data Model/TailoringEngine.md`.
+
+**Attribution.** Resume-Matcher (Apache-2.0 © srbhr) influenced the high-level
+idea of a gated, grounded tailoring pipeline that emits a deterministic match
+score separately from the LLM step. No Resume-Matcher source is incorporated.
+The conceptual-inspiration entry, the Apache-2.0 attribution boilerplate, and
+the rule for upgrading the entry if any code is ever ported live in `NOTICE.md`
+§4 (Resume-Matcher).
+
 ## 4. Key Decisions
 
 - **Electron, not Tauri/native:** the product *needs* an embedded browser to scan
@@ -204,6 +278,16 @@ two existing egress paths.
 - **No auto-apply, human-in-the-loop:** Star drafts and tracks but never submits —
   a deliberate product *and* risk boundary (ToS / accuracy), so the architecture
   has no employer-submission path at all.
+- **Tailoring engine: LangGraph orchestrates, gates pure, apply UI-driven (Epic 9):**
+  the engine's `StateGraph` only routes between nodes — every validation, skill
+  verification, refine helper, and the Epic 5 rescore is a pure TypeScript
+  function imported from TDE-001 .. TDE-004 and Epic 5, with no validation logic
+  hiding in prompts or graph edges. The four gates and the `apply` operation are
+  pure (no side effects, no LLM call). The accept / dismiss decision and the
+  actual application of diffs to the working document live in the Epic 7 UI —
+  the engine never auto-applies. This keeps the LLM untrusted, the gates
+  unit-testable in isolation, and the human in the loop on every change that
+  ships into a draft.
 - **Scheduler in main, no external daemon:** background scans run inside the app's
   main process on a cadence; nothing extra to install, and missed windows are
   caught on wake/launch.

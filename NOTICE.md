@@ -159,7 +159,63 @@ documents produced by Star Job Search.
 
 ---
 
-## 4. Other build / dev dependencies
+## 4. Resume-Matcher (Apache-2.0) — conceptual inspiration for the Tailoring Diff Engine
+
+**Project:** Resume-Matcher — open-source resume / job-description matching
+and tailoring toolkit.
+**Upstream:** <https://github.com/srbhr/Resume-Matcher>
+**Copyright:** © srbhr and Resume-Matcher contributors.
+**Licence:** Apache License, Version 2.0.
+**Scope of reuse in this project:** *conceptual inspiration only* — no
+source code, prompts, configuration, rubric text, or model artefacts
+are copied verbatim or in substantial part. The Tailoring Diff Engine
+shipped under Epic 9 (TDE-001 .. TDE-009: `tailoringDocument.ts`,
+`tailorGates.ts`, `skillVerifier.ts`, `refine.ts`, `diffPrompts.ts`,
+`tailorEngine.ts`, `tailorEngineIpc.ts`) is independently implemented
+from first principles against this project's own data model.
+
+**Changes made vs. upstream:** Star Job Search does NOT carry any
+Resume-Matcher code; the engine is a new implementation. We reuse only
+the high-level *idea* that a CV can be tailored to a job description
+through a structured, gated, grounded-edit pipeline that emits a
+deterministic match score separately from the LLM step. Should any
+file in this repository ever come to incorporate Resume-Matcher source
+in substantial part, that file MUST gain a borrowed-scope header
+(`Portions adapted from Resume-Matcher — Apache-2.0 © srbhr — changes:
+<description>`) and this section MUST be upgraded to (a) preserve the
+upstream `NOTICE` text alongside the LICENSE reproduced below, and
+(b) state the specific modifications, as required by Apache-2.0 §4.
+
+Because the engine is wholly independent today, no Resume-Matcher
+`NOTICE` content is required to be reproduced here. We nevertheless
+reproduce the Apache-2.0 attribution boilerplate below so the licence
+posture is unambiguous, and so any future incorporation can extend
+this section rather than create one.
+
+### Apache-2.0 attribution boilerplate (as required by §4)
+
+```
+Copyright © srbhr and Resume-Matcher contributors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
+
+The full Apache License, Version 2.0 text is available at
+<http://www.apache.org/licenses/LICENSE-2.0>.
+
+---
+
+## 5. Other build / dev dependencies
 
 Star Job Search depends on a wide range of permissively-licensed
 JavaScript / TypeScript packages (declared in `app/package.json`).
