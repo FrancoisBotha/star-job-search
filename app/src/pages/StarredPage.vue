@@ -56,6 +56,17 @@
             @click="openTailor(j.sourceId)"
           />
           <q-btn
+            unelevated
+            no-caps
+            color="secondary"
+            class="eval"
+            label="Eval"
+            :loading="store.evalGenerateStateFor(j.sourceId).status === 'loading'"
+            :disable="!store.canGenerateEval(j.sourceId)"
+            :title="store.canGenerateEval(j.sourceId) ? 'Open or generate the Job Evaluation Report' : store.evalDisabledReason(j.sourceId)"
+            @click="openEval(j.sourceId)"
+          />
+          <q-btn
             outline
             no-caps
             class="dismiss"
@@ -65,11 +76,22 @@
         </footer>
       </article>
     </div>
+
+    <q-dialog v-model="showWebResearchDisclosure">
+      <q-card class="disclosure">
+        <div class="font-serif disclosure__title">Web research is local-only</div>
+        <p class="disclosure__body">{{ store.webResearchSetting?.disclosure }}</p>
+        <div class="disclosure__actions">
+          <q-btn v-close-popup outline no-caps class="ghost" label="Cancel" />
+          <q-btn unelevated color="primary" no-caps label="I understand" @click="confirmWebResearchDisclosure" />
+        </div>
+      </q-card>
+    </q-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAppStore } from 'src/stores/app-store';
 import StarRating from 'src/components/StarRating.vue';
@@ -101,6 +123,41 @@ const tailorDisabledReason = computed<string | null>(() => {
 
 function openTailor(sourceId: string): void {
   void router.push({ name: 'tailor', query: { sourceId } });
+}
+
+/**
+ * EVAL-005 AC2 — open or generate the Job Evaluation Report for one
+ * starred job. If a fresh, non-stale cached report already exists, the
+ * action is a no-op on the network side (the caller can route to a
+ * report view if/when one is wired up); otherwise it kicks off the
+ * EVAL-004 orchestrator via the store action.
+ *
+ * EVAL-005 AC3 — when the user has opted into web research but not yet
+ * acknowledged the EVAL-004 disclosure, the disclosure dialog is shown
+ * first; the generate call is deferred until the user confirms.
+ */
+const showWebResearchDisclosure = ref(false);
+const pendingEvalSourceId = ref<string | null>(null);
+async function openEval(sourceId: string): Promise<void> {
+  if (!store.canGenerateEval(sourceId)) return;
+  await store.hydrateWebResearchSetting();
+  if (store.webResearchSetting?.webResearchEnabled && store.needsWebResearchDisclosure) {
+    pendingEvalSourceId.value = sourceId;
+    showWebResearchDisclosure.value = true;
+    return;
+  }
+  if (store.hasEvalReport(sourceId) && !store.isEvalReportStale(sourceId)) {
+    await store.getEvalReport(sourceId);
+    return;
+  }
+  await store.generateEval(sourceId);
+}
+async function confirmWebResearchDisclosure(): Promise<void> {
+  await store.acknowledgeWebResearchDisclosure();
+  const id = pendingEvalSourceId.value;
+  showWebResearchDisclosure.value = false;
+  pendingEvalSourceId.value = null;
+  if (id) await store.generateEval(id);
 }
 
 const STRONG_STARS = 4;
@@ -135,6 +192,7 @@ onMounted(async () => {
   await store.listScores();
   await store.hydrateApiKeyStatus();
   await store.hydratePreferredModels();
+  await store.hydrateWebResearchSetting();
 });
 </script>
 
@@ -183,4 +241,16 @@ onMounted(async () => {
 .col-grow { flex: 1; }
 .dismiss { color: var(--muted); border-color: var(--border-strong); }
 .generate { color: var(--accent-hover); background: var(--accent-tint); }
+.eval { color: var(--accent-hover); background: var(--accent-tint); }
+.disclosure {
+  width: 420px;
+  max-width: 90vw;
+  padding: 24px;
+  border-radius: 14px;
+  background: var(--bg);
+}
+.disclosure__title { font-size: 20px; line-height: 1.2; color: var(--text-1); }
+.disclosure__body { font-size: 13px; color: var(--text-2); line-height: 1.55; margin: 14px 0 0; white-space: pre-line; }
+.disclosure__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.ghost { color: var(--text-2); border-color: var(--border-strong); }
 </style>

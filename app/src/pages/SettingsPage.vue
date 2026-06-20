@@ -100,6 +100,31 @@
         </div>
       </div>
 
+      <!-- Web research (EVAL-005 AC3) -->
+      <h2 class="section-title sec">Web research</h2>
+      <p class="lead">Used by Job Evaluation Reports to enrich the company-context blocks. Off by default — fully local-only, no extra API key.</p>
+      <div class="card card--rows">
+        <div class="srow">
+          <div>
+            <div class="srow__title">Enable web research</div>
+            <div class="srow__sub">Lets the Eval report fetch a few public pages to ground Block A / D / G.</div>
+          </div>
+          <q-toggle
+            :model-value="!!store.webResearchSetting?.webResearchEnabled"
+            color="primary"
+            @update:model-value="(v) => store.setWebResearchEnabled(!!v)"
+          />
+        </div>
+        <div v-if="store.webResearchSetting?.disclosure" class="srow srow--col">
+          <div class="srow__title">Disclosure</div>
+          <p class="webres__disclosure">{{ store.webResearchSetting.disclosure }}</p>
+          <div v-if="store.needsWebResearchDisclosure" class="webres__ack">
+            <q-btn unelevated color="dark" no-caps label="Acknowledge" @click="store.acknowledgeWebResearchDisclosure()" />
+            <span class="webres__hint">Until acknowledged, web research is held off even when the toggle is on.</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Scanning -->
       <h2 class="section-title sec">Scanning</h2>
       <div class="card card--rows">
@@ -239,6 +264,10 @@ onMounted(() => {
   // LLM-006 AC3 — pull the persisted preferred-models list so the Settings
   // card reflects the choices that survived the last restart.
   void store.hydratePreferredModels();
+  // EVAL-005 AC3 — pull the persisted Web-research opt-in + the EVAL-004
+  // disclosure copy so the Settings toggle reflects whatever survived the
+  // last restart.
+  void store.hydrateWebResearchSetting();
 });
 
 async function onSave() {
@@ -337,6 +366,10 @@ const showAbout = ref(false);
 .srow__title { font-size: 14px; font-weight: 600; }
 .srow__sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .srow__select { min-width: 170px; }
+.srow--col { flex-direction: column; align-items: stretch; gap: 10px; }
+.webres__disclosure { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin: 0; white-space: pre-line; }
+.webres__ack { display: flex; align-items: center; gap: 10px; }
+.webres__hint { font-size: 11.5px; color: var(--muted); }
 
 .site { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-bottom: 1px solid var(--hair-light); }
 .site__url { flex: 1; font-size: 13.5px; color: #3a3530; }

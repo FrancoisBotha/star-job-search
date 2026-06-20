@@ -18,6 +18,32 @@ import {
 export type { MatchFactor, MatchScore };
 
 /**
+ * Renderer-side mirror of the persisted Job Evaluation Report (EVAL-002 /
+ * EVAL-004 / Epic 14). Re-export of the ambient [[EvalReport]] shape so
+ * callers can import it from a single module alongside the store.
+ */
+export type EvalReportRecord = EvalReport;
+
+/**
+ * Per-job generate state for the Job Evaluation Report (EVAL-005). `idle`
+ * is the resting state; `loading` while the orchestrator call is in flight;
+ * `error` carries the stable [[StarEvalErrorCode]] (NO_API_KEY /
+ * MODEL_NOT_CAPABLE / RATE_LIMITED / NETWORK / NO_SCORE) so the UI can
+ * render the matching message without parsing exception text.
+ */
+export interface EvalGenerateState {
+  status: 'idle' | 'loading' | 'error';
+  code: StarEvalErrorCode | null;
+  message: string | null;
+}
+
+const IDLE_EVAL_STATE: EvalGenerateState = {
+  status: 'idle',
+  code: null,
+  message: null,
+};
+
+/**
  * Renderer-side mirror of the persisted AI Match Review (AIREV-001 /
  * AIREV-002 / Epic 6 §7) — narrative ONLY (no number/score field by
  * construction). Re-export of the ambient [[StarMatchReview]] shape so
@@ -435,6 +461,31 @@ interface AppState {
   /** The job persisted by the most recent successful run (XJOB-004 AC2).
    *  Drives the "Added: {title} — {company}" success copy. */
   extractVisibleLastJob: JobRecord | null;
+  /**
+   * Cached Job Evaluation Reports keyed by `sourceId` (EVAL-005 AC1). The
+   * narrative blob (Blocks A/C/D/G/H + sources + legitimacy verdict + the
+   * persisted stale flag) survives a restart on the main side; the renderer
+   * mirrors it lazily on [[getEvalReport]] / [[generateEval]] success so
+   * the Starred / Job-detail surfaces can render without re-fetching.
+   */
+  evalReports: Record<string, EvalReport>;
+  /**
+   * Per-job generate state for the eval report keyed by `sourceId`
+   * (EVAL-005 AC1). idle → loading → idle on success / error with the
+   * stable [[StarEvalErrorCode]] so the UI can render the specific message
+   * for NO_API_KEY / MODEL_NOT_CAPABLE / RATE_LIMITED / NETWORK / NO_SCORE
+   * without parsing exception text.
+   */
+  evalGenerateStates: Record<string, EvalGenerateState>;
+  /**
+   * Persisted Web-research settings mirrored from main via
+   * `window.starEval.getWebResearchSetting` (EVAL-005 AC3). `null` until
+   * first hydrated. Carries the EVAL-004 disclosure copy alongside the two
+   * opt-in flags so the Settings card and first-use disclosure dialog stay
+   * in sync with the engineering-level guarantee (local-only, partitioned
+   * session, no extra API key, content treated as untrusted).
+   */
+  webResearchSetting: StarWebResearchSetting | null;
 }
 
 export const useAppStore = defineStore('app', {
@@ -485,6 +536,9 @@ export const useAppStore = defineStore('app', {
     extractVisibleErrorCode: null,
     extractVisibleError: null,
     extractVisibleLastJob: null,
+    evalReports: {},
+    evalGenerateStates: {},
+    webResearchSetting: null,
   }),
 
   getters: {
@@ -775,6 +829,70 @@ export const useAppStore = defineStore('app', {
     /** Convenience flag for the in-flight state (XJOB-004 AC2). */
     isExtractingVisible: (state): boolean =>
       state.extractVisibleStatus === 'extracting',
+    /**
+     * True iff a cached Job Evaluation Report exists for the given job
+     * (EVAL-005 AC1). Drives the "Generate eval" vs "Show eval" toggle on
+     * the Starred tile / Job-detail surface.
+     */
+    hasEvalReport: (state) => (sourceId: string): boolean =>
+      Boolean(state.evalReports[sourceId]),
+    /**
+     * True when the cached eval report's `stale` flag is set (EVAL-005
+     * AC1). Mirrors the main-side flag that flips on CV / Profile change
+     * or job re-extract — drives the "may be out of date" badge.
+     */
+    isEvalReportStale: (state) => (sourceId: string): boolean =>
+      Boolean(state.evalReports[sourceId]?.stale),
+    /**
+     * Per-job generate state lookup (EVAL-005 AC1). Always returns a
+     * defined snapshot so the Starred tile can render without nullish
+     * guards — defaults to the shared `idle` constant.
+     */
+    evalGenerateStateFor:
+      (state) =>
+      (sourceId: string): EvalGenerateState =>
+        state.evalGenerateStates[sourceId] ?? IDLE_EVAL_STATE,
+    /**
+     * True when the Starred-tile "Eval" button should be enabled for the
+     * given job (EVAL-005 AC2). The orchestrator needs an OpenRouter key
+     * (Epic 2), a default model (LLM-003), AND a persisted deterministic
+     * Epic 5 score (NO_SCORE is the only "configuration" error code from
+     * EVAL-004 that the orchestrator itself raises — the rating is sourced
+     * from `match_scores`, never invented). Mirrored here so the button
+     * disables BEFORE the click; defence-in-depth, not the only check.
+     */
+    canGenerateEval: (state) => (sourceId: string): boolean =>
+      state.apiKeyStatus.present &&
+      state.preferredModels.some((m) => m.isDefault) &&
+      Boolean(state.scores[sourceId]),
+    /**
+     * Stable human copy explaining why the Eval button is disabled
+     * (EVAL-005 AC2). Bound to the button's `title` attribute so the user
+     * sees the reason on hover — never a silent disable.
+     */
+    evalDisabledReason:
+      (state) =>
+      (sourceId: string): string => {
+        if (!state.apiKeyStatus.present) {
+          return 'Add an OpenRouter API key in Settings to enable Eval.';
+        }
+        if (!state.preferredModels.some((m) => m.isDefault)) {
+          return 'Pick a default model in Settings to enable Eval.';
+        }
+        if (!state.scores[sourceId]) {
+          return 'Rescore this job from the Job Board first — the eval report uses the deterministic match score.';
+        }
+        return '';
+      },
+    /**
+     * True when web research is opted in but the EVAL-004 disclosure has
+     * not been acknowledged yet (EVAL-005 AC3). The first-use disclosure
+     * dialog is gated on this so the user sees the local-only /
+     * partitioned-session guarantee before any external fetch is allowed.
+     */
+    needsWebResearchDisclosure: (state): boolean =>
+      Boolean(state.webResearchSetting) &&
+      !state.webResearchSetting!.disclosureAcknowledged,
   },
 
   actions: {
@@ -1944,6 +2062,128 @@ export const useAppStore = defineStore('app', {
       const bridge = typeof window !== 'undefined' ? window.starPdf : undefined;
       if (!bridge || !savedPath) return;
       await bridge.reveal(savedPath);
+    },
+    /**
+     * Hydrate a single Job Evaluation Report from main via `eval:get`
+     * (EVAL-005 AC1). Inserts the row into `state.evalReports` keyed by
+     * `sourceId` so the provenance / stale selectors update without
+     * re-fetching. Returns the persisted report (or null when none exists
+     * / the bridge is absent).
+     */
+    async getEvalReport(sourceId: string): Promise<EvalReport | null> {
+      const bridge = typeof window !== 'undefined' ? window.starEval : undefined;
+      if (!bridge) return null;
+      const row = await bridge.get(sourceId);
+      if (row) this.evalReports[sourceId] = row;
+      return row;
+    },
+    /**
+     * Generate (or regenerate) the Job Evaluation Report for a job via
+     * `eval:generate` (EVAL-005 AC1). Manages the per-job state machine
+     * (idle → loading → idle on success / error with the stable
+     * [[StarEvalErrorCode]]) and stores the persisted report keyed by
+     * `sourceId` on success.
+     */
+    async generateEval(
+      sourceId: string,
+    ): Promise<StarEvalGenerateResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starEval : undefined;
+      if (!bridge) return undefined;
+      this.evalGenerateStates[sourceId] = {
+        status: 'loading',
+        code: null,
+        message: null,
+      };
+      try {
+        const result = await bridge.generate(sourceId);
+        if (result.ok) {
+          this.evalReports[sourceId] = result.report;
+          this.evalGenerateStates[sourceId] = {
+            status: 'idle',
+            code: null,
+            message: null,
+          };
+        } else {
+          this.evalGenerateStates[sourceId] = {
+            status: 'error',
+            code: result.code,
+            message: result.error,
+          };
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'eval failed';
+        this.evalGenerateStates[sourceId] = {
+          status: 'error',
+          code: 'NETWORK',
+          message,
+        };
+        return { ok: false, code: 'NETWORK', error: message };
+      }
+    },
+    /**
+     * Flip the cached eval report for one job stale locally (EVAL-005
+     * AC1). Mirrors the main-side `markEvalReportStale` hook fired when a
+     * job is re-extracted so the UI reflects the stale banner without a
+     * round-trip.
+     */
+    markEvalReportStaleForJob(sourceId: string) {
+      const row = this.evalReports[sourceId];
+      if (row) this.evalReports[sourceId] = { ...row, stale: true };
+    },
+    /**
+     * Flip every cached eval report stale locally (EVAL-005 AC1). Mirrors
+     * the main-side `markAllEvalReportsStale` hook fired when the CV or
+     * Profile changes so every Starred tile reflects the stale banner
+     * before the user reopens the report.
+     */
+    markAllEvalReportsStale() {
+      for (const id of Object.keys(this.evalReports)) {
+        const row = this.evalReports[id];
+        if (row) this.evalReports[id] = { ...row, stale: true };
+      }
+    },
+    /**
+     * Hydrate the persisted Web-research settings from main via
+     * `webResearch:getSetting` (EVAL-005 AC3). The returned payload
+     * includes the EVAL-004 disclosure copy verbatim so the renderer's
+     * first-use dialog stays in sync with the engineering-level guarantee.
+     */
+    async hydrateWebResearchSetting(): Promise<StarWebResearchSetting | null> {
+      const bridge = typeof window !== 'undefined' ? window.starEval : undefined;
+      if (!bridge) return null;
+      const setting = await bridge.getWebResearchSetting();
+      this.webResearchSetting = setting;
+      return setting;
+    },
+    /**
+     * Persist the Web-research opt-in toggle via `webResearch:setEnabled`
+     * (EVAL-005 AC3). The persisted-setting mirror is replaced verbatim by
+     * the returned payload so the Settings card and the gating logic stay
+     * in lockstep.
+     */
+    async setWebResearchEnabled(
+      enabled: boolean,
+    ): Promise<StarWebResearchSetting | null> {
+      const bridge = typeof window !== 'undefined' ? window.starEval : undefined;
+      if (!bridge) return null;
+      const setting = await bridge.setWebResearchEnabled(enabled);
+      this.webResearchSetting = setting;
+      return setting;
+    },
+    /**
+     * Persist the EVAL-004 disclosure acknowledgement via
+     * `webResearch:acknowledgeDisclosure` (EVAL-005 AC3). Called from the
+     * first-use dialog when the user confirms the local-only / partitioned
+     * guarantee — until acknowledged, EVAL-001 returns
+     * `code: 'disclosure_required'` even when the toggle is on.
+     */
+    async acknowledgeWebResearchDisclosure(): Promise<StarWebResearchSetting | null> {
+      const bridge = typeof window !== 'undefined' ? window.starEval : undefined;
+      if (!bridge) return null;
+      const setting = await bridge.acknowledgeWebResearchDisclosure();
+      this.webResearchSetting = setting;
+      return setting;
     },
     async structureCv(text: string): Promise<StarCvStructureResult | null> {
       const bridge = typeof window !== 'undefined' ? window.starCvStructurer : undefined;
