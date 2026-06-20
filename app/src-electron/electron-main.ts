@@ -37,6 +37,11 @@ import {
   registerTailorIpc,
 } from './tailorIpc';
 import {
+  registerTailorEngineIpc,
+  TAILOR_ENGINE_PROGRESS_CHANNEL,
+  type TailorEngineProgressEvent,
+} from './tailorEngineIpc';
+import {
   createScoringRunner,
   isScoringRelevantProfileChange,
   registerScoringIpc,
@@ -430,6 +435,41 @@ function createWindow() {
       return built.llm;
     },
     rescore: (sourceId: string) => scoringRunner.rescoreOne(sourceId),
+  });
+
+  // Wire the Tailor Engine IPC (TDE-006 / Epic 9). `tailor:propose` runs the
+  // bounded LangGraph pipeline (TDE-005) and returns the full
+  // TailorEngineResult for the renderer's diff-review UI. `tailor:apply`
+  // applies the user-accepted subset DETERMINISTICALLY through the TDE-002
+  // gates (NO LLM call), persists the saved tailored doc, and delegates the
+  // rescore to the SAME Epic 5 scoring runner (FR-012 / NFR-002 hard
+  // boundary). Per-node progress events stream over
+  // `tailor-engine:progress`.
+  const emitTailorEngineProgress = (event: TailorEngineProgressEvent) => {
+    mainWindow?.webContents.send(TAILOR_ENGINE_PROGRESS_CHANNEL, event);
+  };
+  registerTailorEngineIpc(ipcMain, {
+    store: tailoredDocsStore,
+    jobsStore,
+    cvStore: cvStoreWithReviewStaleHook,
+    reviewsStore: matchReviewsStore,
+    getProfile: () => profileStore.get(),
+    getApiKey: () => apiKeyStore.getRawKey(),
+    getDefaultModel: () => {
+      const models = preferredModelsStore.list();
+      const def = models.find((m) => m.isDefault);
+      return def?.slug ?? null;
+    },
+    buildLlm: async ({ apiKey, model }) => {
+      const built = await buildTailorLlm({ apiKey, model });
+      if (!built.ok) {
+        const err = built as unknown as { error: string };
+        throw new Error(err.error);
+      }
+      return built.llm;
+    },
+    rescore: (sourceId: string) => scoringRunner.rescoreOne(sourceId),
+    emitProgress: emitTailorEngineProgress,
   });
 
   // Wire the PDF-export IPC (PDFEX-004 / Epic 8 §7). Compiles the persisted

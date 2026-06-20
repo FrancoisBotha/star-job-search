@@ -248,6 +248,43 @@ contextBridge.exposeInMainWorld('starTailor', {
   export: (input: TailorDocSelector) => ipcRenderer.invoke('tailor:export', input),
 });
 
+// Tailor diff-engine bridge (TDE-006 / Epic 9). `propose` runs the bounded
+// LangGraph pipeline (extract-JD-signals → plan/verify-skills → generate-diffs
+// → gate-filter → refine → rescore) and returns the full TailorEngineResult
+// for the renderer's diff-review UI. `apply` takes the user-accepted subset
+// of ProposedChanges, applies it DETERMINISTICALLY through the TDE-002 gates
+// (NO LLM call), persists the saved tailored doc via the Epic 7 tailored_docs
+// store, and triggers the Epic 5 deterministic rescore. Both return a
+// tagged-union result with stable error codes (NO_API_KEY / NO_DEFAULT_MODEL
+// / NO_DOC / MODEL_NOT_CAPABLE / RATE_LIMITED / NETWORK / LLM_ERROR /
+// SCHEMA_ERROR). Per-node progress streams over `tailor-engine:progress`.
+interface TailorProposeInput {
+  sourceId: string;
+}
+interface TailorApplyInput {
+  sourceId: string;
+  doc: unknown;
+  accepted: unknown[];
+  verifiedSkills?: string[];
+}
+interface TailorEngineProgressEvent {
+  phase: string;
+  sourceId: string;
+  pass?: number;
+  note?: string;
+}
+
+contextBridge.exposeInMainWorld('starTailorEngine', {
+  propose: (input: TailorProposeInput) =>
+    ipcRenderer.invoke('tailor:propose', input),
+  apply: (input: TailorApplyInput) => ipcRenderer.invoke('tailor:apply', input),
+  onProgress: (cb: (event: TailorEngineProgressEvent) => void) => {
+    const listener = (_event: unknown, evt: TailorEngineProgressEvent) => cb(evt);
+    ipcRenderer.on('tailor-engine:progress', listener);
+    return () => ipcRenderer.removeListener('tailor-engine:progress', listener);
+  },
+});
+
 // PDF-export bridge (PDFEX-004 / Epic 8). `export` compiles the persisted
 // TailoredDoc via the bundled LaTeX engine (PDFEX-002), opens a native save
 // dialog, writes the PDF locally — Star performs NO submission — and records

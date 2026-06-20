@@ -525,6 +525,153 @@ interface StarTailorApi {
   export: (input: StarTailorDocSelector) => Promise<StarTailorExportResult>;
 }
 
+/** Renderer-side mirror of a TDE-002 ProposedChange (TDE-006 / Epic 9). */
+type StarTailorAction = 'replace' | 'append' | 'reorder' | 'add_skill';
+interface StarProposedChange {
+  path: string;
+  action: StarTailorAction;
+  original?: string;
+  value: unknown;
+  reason: string;
+}
+
+/** Refine-side warning surfaced by the engine (TDE-003 / Epic 9). */
+type StarRefineWarningKind = 'invented_metric' | 'word_count_blowup';
+interface StarRefineWarning {
+  kind: StarRefineWarningKind;
+  message: string;
+  value: string;
+}
+
+/** Per-skill verdict from the TDE-002 verifier (Epic 9). */
+type StarSkillClassification =
+  | 'existing'
+  | 'jd_added'
+  | 'supported_by_resume'
+  | 'rejected';
+interface StarSkillVerdict {
+  skill: string;
+  classification: StarSkillClassification;
+  accepted: boolean;
+  reason: string;
+}
+
+/** Bounded-refine-loop statistics (TDE-005 / Epic 9). */
+interface StarRefinementStats {
+  initialPercent: number;
+  finalPercent: number;
+  passes: number;
+  exitReason: 'no_injectable_keywords' | 'no_improvement' | 'max_passes' | 'not_started';
+}
+
+/** Renderer-side mirror of a TDE-001 TailoringDocument (Epic 9). */
+interface StarTailoringIdentity {
+  name: string | null;
+  contact: { email: string | null; phone: string | null };
+  location: string | null;
+}
+interface StarTailoringExperience {
+  company: string | null;
+  role: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  bullets: string[];
+}
+interface StarTailoringProject {
+  name: string | null;
+  bullets: string[];
+}
+interface StarTailoringEducation {
+  school: string | null;
+  qualification: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  description: string;
+}
+interface StarTailoringDocument {
+  identity: StarTailoringIdentity;
+  summary: string;
+  skills: string[];
+  experience: StarTailoringExperience[];
+  projects: StarTailoringProject[];
+  education: StarTailoringEducation[];
+  meta: { bulletSource: 'parsed' | 'baseCvText' | 'none' };
+}
+
+/** Rejected change record returned by the gates (TDE-002 / Epic 9). */
+interface StarRejectedChange {
+  change: StarProposedChange;
+  reason: string;
+}
+
+/** TDE-005 engine result returned by tailor:propose (TDE-006 / Epic 9). */
+interface StarTailorEngineResult {
+  proposedChanges: StarProposedChange[];
+  rejected: StarRejectedChange[];
+  warnings: StarRefineWarning[];
+  refinementStats: StarRefinementStats;
+  doc: StarTailoringDocument;
+  skillVerdicts: StarSkillVerdict[];
+}
+
+/** Stable failure codes returned by tailor:propose / tailor:apply
+ *  (TDE-006 / Epic 9). Mirrors `TailorEngineErrorCode` in tailorEngineIpc.ts. */
+type StarTailorEngineErrorCode =
+  | 'NO_API_KEY'
+  | 'NO_DEFAULT_MODEL'
+  | 'NO_DOC'
+  | 'MODEL_NOT_CAPABLE'
+  | 'RATE_LIMITED'
+  | 'NETWORK'
+  | 'LLM_ERROR'
+  | 'SCHEMA_ERROR';
+
+interface StarTailorProposeInput {
+  sourceId: string;
+}
+interface StarTailorApplyInput {
+  sourceId: string;
+  doc: StarTailoringDocument;
+  accepted: StarProposedChange[];
+  verifiedSkills?: string[];
+}
+
+type StarTailorProposeResult =
+  | { ok: true; result: StarTailorEngineResult }
+  | { ok: false; code: StarTailorEngineErrorCode; error: string };
+
+type StarTailorApplyResult =
+  | { ok: true; doc: StarTailoredDoc; scored: number }
+  | { ok: false; code: StarTailorEngineErrorCode; error: string };
+
+/** Per-node progress event streamed via `tailor-engine:progress` (TDE-006). */
+interface StarTailorEngineProgressEvent {
+  phase:
+    | 'extract-jd-signals'
+    | 'plan-skills'
+    | 'generate-diffs'
+    | 'gate-filter'
+    | 'refine'
+    | 'rescore'
+    | 'done'
+    | string;
+  sourceId: string;
+  pass?: number;
+  note?: string;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the TDE-005 engine
+ *  (TDE-006 / Epic 9). `propose` runs the bounded LangGraph pipeline and
+ *  returns the full TailorEngineResult; `apply` takes the user-accepted
+ *  ProposedChange subset, applies it DETERMINISTICALLY (no LLM call),
+ *  persists via the Epic 7 tailored_docs store, and triggers the Epic 5
+ *  rescore. `onProgress` subscribes to per-node progress events. */
+interface StarTailorEngineApi {
+  propose: (input: StarTailorProposeInput) => Promise<StarTailorProposeResult>;
+  apply: (input: StarTailorApplyInput) => Promise<StarTailorApplyResult>;
+  onProgress: (cb: (event: StarTailorEngineProgressEvent) => void) => () => void;
+}
+
 /** Bridge exposed by src-electron/electron-preload.ts (CVPROF-011). Resolves
  *  a picked/dropped File object to its absolute filesystem path via Electron's
  *  `webUtils.getPathForFile` — a contextIsolation-safe replacement for the
@@ -597,5 +744,6 @@ interface Window {
   starScores?: StarScoresApi;
   starReview?: StarReviewApi;
   starTailor?: StarTailorApi;
+  starTailorEngine?: StarTailorEngineApi;
   starPdf?: StarPdfApi;
 }
