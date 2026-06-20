@@ -173,6 +173,27 @@
         </div>
       </div>
 
+      <!-- Exporting your draft -->
+      <h2 class="section-title sec">Exporting your draft</h2>
+      <p class="lead">
+        The Tailor view has a single <strong>Export</strong> button that opens a dropdown menu
+        offering three formats — <strong>Markdown</strong>, <strong>Word</strong> and
+        <strong>PDF</strong>. The unified menu replaces the old row of standalone Copy, Export
+        text, Export Markdown and Export PDF buttons, so you choose the format you want rather
+        than picking a button per format. Whichever item you select, the file is
+        <strong>saved locally</strong> through a save dialog — Star <strong>never submits</strong>
+        the application for you and never uploads the exported file anywhere.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in exportSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Exporting to PDF -->
       <h2 class="section-title sec">Exporting to PDF</h2>
       <p class="lead">
@@ -418,8 +439,8 @@ const tailorSteps = [
     body: 'When the listing asks for something your evidence does not clearly cover — domain, start date, seniority, language — the cover letter surfaces an Open questions panel rather than silently papering over the gap. Each question carries Confirm and Not applicable buttons so you answer in your own words. The textarea above is fully editable in place, and your edits flow through to Copy and Export unchanged.',
   },
   {
-    title: 'Copy and Export — text or Markdown',
-    body: 'Use the Copy button to put the current draft on the clipboard, Export text (cover letter only) to save plain text, or Export Markdown to save a Markdown file. These are the only ways a draft leaves the app — Star never submits the application for you, so you remain the human in the loop on every send.',
+    title: 'Export the draft via the unified Export menu',
+    body: 'A single Export button in the top bar opens a dropdown offering Markdown, Word and PDF — pick whichever format you need rather than hunting for a per-format button. Each menu item saves the current draft to a file you choose; nothing is sent anywhere. Star never submits the application for you, so you remain the human in the loop on every send. See "Exporting your draft" below for the format breakdown.',
   },
   {
     title: 'Stale drafts and Regenerate',
@@ -459,6 +480,37 @@ const evalSteps = [
   {
     title: 'Stale reports, Regenerate and Export',
     body: 'Reports cache per job and survive restart. When you edit your CV or Profile, or the underlying job is re-extracted, Star marks the report "may be out of date" and offers Regenerate — a fresh structured call against the current inputs. Export sends the report (Markdown, Word or PDF) through the unified Export menu; Star never submits anything on your behalf.',
+  },
+];
+
+const exportSteps = [
+  {
+    title: 'Find the Export menu in the Tailor view',
+    body: 'A single Export button sits in the top bar of the Tailor view and is shared between the Tailored CV and Cover-letter tabs — whichever draft you have open is what gets exported. Click it to open a dropdown menu with three items: Markdown, Word and PDF. The button itself is disabled until a tailored draft exists, with a tooltip explaining why, so generate one first if you have not already.',
+  },
+  {
+    title: 'Choose a format from the menu',
+    body: 'Pick Markdown for a plain text-like .md file you can paste into any editor, Word for an ATS-safe .docx you can hand to a recruiter, or PDF for the polished single-column document Star renders through its bundled LaTeX engine. The menu items run in parallel — kicking off one export does not disable the others, so you can save the same draft in two formats back-to-back if you want.',
+  },
+  {
+    title: 'Word (.docx) — ATS-safe by construction',
+    body: 'The Word item writes a .docx file built for applicant-tracking systems: single-column layout, real headings (not text styled to look like headings), selectable text, embedded standard fonts and no images, text boxes or tables that ATS parsers tend to choke on. The output mirrors the same draft you see on screen — Star compiles, it does not rewrite — and the file lands wherever you tell the save dialog.',
+  },
+  {
+    title: 'Save the file where you want it',
+    body: 'Selecting Markdown, Word or PDF opens a save dialog so you choose where the file lands — Star never writes the export without asking, and never uploads it anywhere. A progress spinner sits on the active item while the writer runs, then a success toast confirms the saved path. The other menu items remain usable while one export is running.',
+  },
+  {
+    title: 'Reveal in folder',
+    body: 'Every success toast carries a Reveal in folder action that opens the saved file in Finder / Explorer with the file selected, so you can attach it to an application without digging through your filesystem. The provenance of every export (format, model, date, file path) is recorded locally for your reference.',
+  },
+  {
+    title: 'Disabled items tell you why',
+    body: 'If a format cannot run on this install, its menu item is disabled with a tooltip explaining the reason rather than silently missing. Word is disabled when the .docx bridge is not available; PDF is disabled with "PDF toolchain not available" when the bundled LaTeX engine is not found. Markdown is always available because it writes plain text — no bridge required. The Export button as a whole is disabled until you have a tailored draft to export.',
+  },
+  {
+    title: 'Star never submits — files stay local',
+    body: 'Every Export menu item writes the draft to a file on this device through the save dialog you control. Star does not POST your CV to a job board, does not email it, and does not call OpenRouter on the export path — the unified menu opens no new egress. You remain the human in the loop: the only way an exported document reaches a recruiter is for you to attach the saved file yourself.',
   },
 ];
 
