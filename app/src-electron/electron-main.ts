@@ -337,6 +337,13 @@ function createWindow() {
       matchScoresStore.deleteAll();
       matchReviewsStore.deleteAll();
     },
+    // EXTR-016 AC2: same cascade, but for a single sourceId — when the
+    // renderer triggers a per-row permanent delete, also clear the matching
+    // match_scores + match_reviews rows so no orphans remain.
+    deleteRelatedOne: (sourceId: string) => {
+      matchScoresStore.delete(sourceId);
+      matchReviewsStore.delete(sourceId);
+    },
     buildExtractor: (input) =>
       buildDefaultExtractor({
         ...input,

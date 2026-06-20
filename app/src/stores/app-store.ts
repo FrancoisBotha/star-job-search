@@ -458,6 +458,15 @@ export const useAppStore = defineStore('app', {
       return out;
     },
     /**
+     * Jobs the user has flagged `not_interested` (EXTR-016 AC5). Powers the
+     * "manage not-interested" UI so the user can review the hidden list and
+     * restore or permanently delete individual entries. Newest-first.
+     */
+    notInterestedJobs: (state): JobRecord[] =>
+      state.jobs
+        .filter((j) => j.status === 'not_interested')
+        .sort((a, b) => b.fetchedAt - a.fetchedAt),
+    /**
      * Jobs the user has starred — the curated shortlist surfaced on the
      * Starred page. Newest-first. Starring is just a `status` flip to
      * `'starred'` via [[setJobStatus]], so a starred job stays on the Job
@@ -977,6 +986,34 @@ export const useAppStore = defineStore('app', {
      * in the default view. Each row is persisted via `board:setStatus` so
      * the change survives a restart; the local cache is updated in lockstep.
      */
+    /**
+     * Permanently delete one imported job from the board (EXTR-016 AC3).
+     * Calls `board:delete` in main — which cascades the delete to that
+     * row's match_scores + match_reviews — and removes the job from local
+     * `jobs` state so visibleJobs / starredJobs / notInterestedJobs /
+     * derived selectors update reactively. No-ops gracefully when the
+     * preload bridge is absent (browser SPA build).
+     */
+    async deleteJob(sourceId: string) {
+      const bridge = typeof window !== 'undefined' ? window.starBoard : undefined;
+      if (!bridge) return;
+      await bridge.delete(sourceId);
+      this.jobs = this.jobs.filter((j) => j.sourceId !== sourceId);
+      delete this.scores[sourceId];
+      delete this.reviews[sourceId];
+      delete this.reviewStates[sourceId];
+    },
+    /**
+     * Return a single `not_interested` job to the board (EXTR-016 AC4).
+     * Reuses [[setJobStatus]] so persistence + local cache update in lockstep,
+     * and uses the same active/default value `restoreNotInterested` uses
+     * (`'new'`) — never `'not_interested'`.
+     */
+    async restoreJob(sourceId: string) {
+      const bridge = typeof window !== 'undefined' ? window.starBoard : undefined;
+      if (!bridge) return;
+      await this.setJobStatus({ sourceId, status: 'new' });
+    },
     async restoreNotInterested() {
       const bridge = typeof window !== 'undefined' ? window.starBoard : undefined;
       if (!bridge) return;

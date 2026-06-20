@@ -82,6 +82,13 @@ export interface ExtractionRuntimeDeps {
    * still wipes the jobs table on its own.
    */
   deleteRelated?: () => void;
+  /**
+   * Single-row cascade hook (EXTR-016 AC2). Invoked by the `board:delete`
+   * handler after the targeted job row is removed so the matching
+   * match_scores + match_reviews rows can be cleared in lockstep — no
+   * orphaned per-job derived rows remain after a permanent delete.
+   */
+  deleteRelatedOne?: (sourceId: string) => void;
 }
 
 const FUNCTION_CALLING_HINTS = /(tool|function[- ]calling|function call|does not support|tools? are not supported|no tools)/i;
@@ -175,6 +182,19 @@ export function registerExtractionIpc(
   ipcMain.handle('board:deleteAll', async () => {
     const deleted = deps.store.deleteAll();
     deps.deleteRelated?.();
+    return { ok: true, deleted };
+  });
+
+  // EXTR-016 — permanently delete a single imported job by sourceId.
+  // Cascades to that row's match_scores + match_reviews via the optional
+  // `deleteRelatedOne` hook so no orphans linger after a per-row delete from
+  // the board UI. Returns the tagged `{ ok, deleted }` result.
+  ipcMain.handle('board:delete', async (_event, sourceId: string) => {
+    if (typeof sourceId !== 'string' || !sourceId) {
+      throw new Error('board:delete expects a non-empty sourceId string');
+    }
+    const deleted = deps.store.delete(sourceId);
+    deps.deleteRelatedOne?.(sourceId);
     return { ok: true, deleted };
   });
 

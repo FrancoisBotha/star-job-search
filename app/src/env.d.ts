@@ -285,6 +285,10 @@ interface StarBoardApi {
   /** Wipe every imported job (EXTR-012). Cascades to match_scores +
    *  match_reviews in main so no orphaned per-job rows remain. */
   deleteAll: () => Promise<{ ok: true; deleted: number }>;
+  /** Permanently delete one imported job by sourceId (EXTR-016). Cascades
+   *  to that row's match_scores + match_reviews in main so no orphans
+   *  remain. */
+  delete: (sourceId: string) => Promise<{ ok: true; deleted: number }>;
 }
 
 /** Result returned by the shell:openExternal IPC channel (JOBDET-001). */

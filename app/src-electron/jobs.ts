@@ -67,6 +67,13 @@ export interface JobsStore {
    * is expensive to relearn on the next AI Extract run.
    */
   deleteAll(): number;
+  /**
+   * Remove a single persisted job row by sourceId (EXTR-016 AC1). Returns the
+   * count of rows removed (0 when the sourceId is unknown). Callers in the
+   * IPC layer cascade the delete to match_scores + match_reviews so no
+   * orphaned per-job rows remain.
+   */
+  delete(sourceId: string): number;
   getSiteProfile(hostname: string): SiteProfile | undefined;
   saveSiteProfile(profile: SiteProfile): void;
 }
@@ -284,6 +291,14 @@ export function createJobsStore(db: JobsDatabaseLike): JobsStore {
       const result = db.prepare('DELETE FROM jobs').run() as
         | { changes?: number }
         | undefined;
+      return result?.changes ?? 0;
+    },
+    delete(sourceId: string): number {
+      // Lazy-prepared (EXTR-016 AC1) — keeps existing test fakes that don't
+      // know the per-row DELETE SQL working when they never call delete().
+      const result = db
+        .prepare('DELETE FROM jobs WHERE source_id = ?')
+        .run(sourceId) as { changes?: number } | undefined;
       return result?.changes ?? 0;
     },
     getSiteProfile(hostname: string): SiteProfile | undefined {

@@ -71,6 +71,9 @@ export interface MatchReviewsStore {
   /** Wipe every row (EXTR-012 AC4) — cascaded from the Job Board's
    *  "delete all imported jobs" action so no orphaned per-job reviews remain. */
   deleteAll(): void;
+  /** Remove the review row for a single sourceId (EXTR-016 AC1) — cascaded
+   *  from the Job Board's per-row delete so no orphaned reviews remain. */
+  delete(sourceId: string): void;
 }
 
 // No score / percent / stars / rating column by construction (Epic 6 hard
@@ -183,6 +186,11 @@ export function createMatchReviewsStore(
       // Lazy-prepared so existing test fakes that don't know the DELETE
       // statement keep working when they never call deleteAll.
       db.prepare('DELETE FROM match_reviews').run();
+    },
+    delete(sourceId: string): void {
+      // Lazy-prepared (EXTR-016 AC1) — same pattern as deleteAll so existing
+      // test fakes that don't model per-row DELETE keep working.
+      db.prepare('DELETE FROM match_reviews WHERE source_id = ?').run(sourceId);
     },
   };
 }
