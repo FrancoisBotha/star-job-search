@@ -15,18 +15,18 @@ import { describe, expect, it } from 'vitest';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TAILOR = readFileSync(path.join(__dirname, 'TailorPage.vue'), 'utf8');
 
-describe('TailorPage — Export-PDF control (AC1, AC2)', () => {
-  it('renders an Export PDF button alongside the existing Copy / Export-text actions', () => {
-    expect(TAILOR).toMatch(/label="Export PDF"/);
-    // Wired via a click handler (named for findability in retries).
-    expect(TAILOR).toMatch(/onExportPdf\b/);
-    // Sits near the Copy / Export-text buttons in the bar.
+describe('TailorPage — PDF export entry point (AC1, AC2)', () => {
+  it('exposes a PDF export item wired to the onExportPdf handler (UEXP-004 surfaces it inside the unified Export menu)', () => {
     expect(TAILOR).toMatch(/data-test="export-pdf"/);
+    expect(TAILOR).toMatch(/onExportPdf\b/);
   });
 
-  it('disables the Export PDF button until a tailored doc exists/is approved', () => {
-    // The disable expression must reference the rendered doc.
-    expect(TAILOR).toMatch(/data-test="export-pdf"[\s\S]{0,400}:disable="!doc"/);
+  it('disables the unified Export control until a tailored doc exists/is approved (UEXP-004 AC2)', () => {
+    // Doc-presence disable now applies to the parent Export menu the PDF
+    // item lives inside, not the per-format button.
+    expect(TAILOR).toMatch(
+      /data-test="export-menu"[\s\S]{0,400}:disable="!doc"/,
+    );
   });
 });
 

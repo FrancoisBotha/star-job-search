@@ -37,20 +37,10 @@
           >Aggressive</button>
         </div>
 
-        <q-btn outline no-caps label="Copy" :disable="!doc" @click="copy" />
-        <q-btn
-          v-if="kind === 'cover-letter'"
-          outline no-caps label="Export text"
-          data-test="export-text"
-          :disable="!doc"
-          @click="onExportText"
-        />
-        <q-btn unelevated color="primary" no-caps label="Export Markdown" :disable="!doc" @click="onExport" />
-
         <!-- Page-size choice for PDF export (PDFEX-005 / AC3). Defaults
              by locale: en-US → Letter, everywhere else → A4. Reuses the
              same `segmented` Studio chrome as the tab + intensity
-             switches so no new design tokens are introduced (AC6). -->
+             switches so no new design tokens are introduced (UEXP-004 AC6). -->
         <div class="segmented" role="group" aria-label="PDF page size">
           <button
             class="seg"
@@ -66,16 +56,46 @@
           >A4</button>
         </div>
 
-        <!-- Export PDF — visible on both CV and Cover-letter tabs
-             (AC1). Disabled until a tailored doc exists (AC2). -->
-        <q-btn
+        <!-- UEXP-004 / Epic 12 §6 — single Export dropdown replacing the
+             prior Copy / Export-text / Export-Markdown / Export-PDF buttons.
+             Visible on both the CV and Cover-letter tabs (FR-001), disabled
+             until a tailored doc exists (FR-006). Individual items are
+             greyed-with-tooltip when their prerequisite is absent. -->
+        <q-btn-dropdown
           unelevated color="primary" no-caps
-          label="Export PDF"
-          data-test="export-pdf"
+          label="Export"
+          data-test="export-menu"
           :disable="!doc"
-          :loading="isExportingPdf"
-          @click="onExportPdf"
-        />
+          :loading="isExportingMarkdown || isExportingWord || isExportingPdf"
+        >
+          <q-list dense>
+            <q-item
+              clickable v-close-popup
+              data-test="export-markdown"
+              @click="onExportMarkdown"
+            >
+              <q-item-section>Markdown</q-item-section>
+            </q-item>
+            <q-item
+              clickable v-close-popup
+              data-test="export-word"
+              :disable="!wordAvailable"
+              @click="onExportWord"
+            >
+              <q-item-section>Word</q-item-section>
+              <q-tooltip v-if="!wordAvailable">Word export not available yet</q-tooltip>
+            </q-item>
+            <q-item
+              clickable v-close-popup
+              data-test="export-pdf"
+              :disable="!pdfAvailable"
+              @click="onExportPdf"
+            >
+              <q-item-section>PDF</q-item-section>
+              <q-tooltip v-if="!pdfAvailable">PDF toolchain not available yet</q-tooltip>
+            </q-item>
+          </q-list>
+        </q-btn-dropdown>
       </div>
     </div>
 
@@ -84,6 +104,33 @@
          on error we surface a stable-code-driven message + Try-again; on
          success the last record's provenance is pinned under the bar so
          the user always sees what was exported and when. -->
+    <div
+      v-if="isExportingMarkdown"
+      class="banner banner--stale"
+      data-test="markdown-exporting"
+    >
+      <q-spinner color="primary" size="14px" />
+      <span class="banner__text">Exporting Markdown…</span>
+    </div>
+
+    <div
+      v-if="isExportingWord"
+      class="banner banner--stale"
+      data-test="word-exporting"
+    >
+      <q-spinner color="primary" size="14px" />
+      <span class="banner__text">Rendering Word document…</span>
+    </div>
+
+    <div
+      v-if="wordExportState.status === 'error'"
+      class="banner banner--error"
+      data-test="word-export-error"
+    >
+      <span class="banner__text">{{ wordErrorCopy }}</span>
+      <q-btn flat dense no-caps color="primary" label="Try again" @click="onExportWord" />
+    </div>
+
     <div
       v-if="isExportingPdf"
       class="banner banner--stale"
@@ -882,49 +929,120 @@ function onDismiss(suggestionId: string): void {
   store.tailoredDocs[`${sourceId.value}::${kind.value}`] = next;
 }
 
-async function copy(): Promise<void> {
-  if (!doc.value) return;
+/* ------------------------------------------------------------------ */
+/* UEXP-004 — Unified Export menu (Epic 12). The three handlers below   */
+/* dispatch from the single Export dropdown to the format-specific     */
+/* paths. Markdown reuses the Epic 7 store action; Word talks to the   */
+/* UEXP-003 word:export bridge; PDF reuses the Epic 8 store action.    */
+/* ------------------------------------------------------------------ */
+
+const isExportingMarkdown = ref<boolean>(false);
+
+async function onExportMarkdown(): Promise<void> {
+  if (!sourceId.value) return;
+  isExportingMarkdown.value = true;
   try {
-    await navigator.clipboard?.writeText(doc.value.content);
-  } catch {
-    /* best-effort */
+    const result = await store.exportTailoredDoc({
+      sourceId: sourceId.value,
+      kind: kind.value,
+    });
+    if (!result?.ok) return;
+    const blob = new Blob([result.content], { type: result.mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = result.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    $q.notify({
+      type: 'positive',
+      message: 'Markdown exported',
+      caption: result.filename,
+      timeout: 4000,
+    });
+  } finally {
+    isExportingMarkdown.value = false;
   }
 }
 
-/**
- * Plain-text export (TAILOR-007 / AC5 / FR-015) — reads the in-renderer
- * edited content directly so the file matches exactly what's on screen.
- * No round-trip through main, no submission path; the user copies / saves
- * the resulting .txt and pastes it wherever they need to.
- */
-function onExportText(): void {
-  if (!doc.value) return;
-  const fname = jobCompany.value
-    ? `cover-letter-${jobCompany.value.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.txt`
-    : 'cover-letter.txt';
-  const blob = new Blob([doc.value.content ?? ''], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fname;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+/** Availability flags for the menu items. The bridges are only present
+ *  inside the Electron renderer; in a plain-browser preview the items are
+ *  greyed-with-tooltip. The PDF item also disables itself once the bundled
+ *  LaTeX engine has reported `TOOLCHAIN_MISSING` so the user sees a
+ *  consistent reason rather than a per-click failure. */
+const wordAvailable = computed<boolean>(
+  () => typeof window !== 'undefined' && !!window.starWord,
+);
+const pdfAvailable = computed<boolean>(() => {
+  if (typeof window === 'undefined' || !window.starPdf) return false;
+  return pdfExportState.value.code !== 'TOOLCHAIN_MISSING';
+});
 
-async function onExport(): Promise<void> {
-  if (!sourceId.value) return;
-  const result = await store.exportTailoredDoc({
-    sourceId: sourceId.value,
-    kind: kind.value,
-  });
-  if (!result?.ok) return;
-  const blob = new Blob([result.content], { type: result.mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = result.filename;
-  a.click();
-  URL.revokeObjectURL(url);
+type WordErrorCode = 'NO_DOC' | 'RENDER_ERROR' | 'IO_ERROR';
+interface WordExportActionState {
+  status: 'idle' | 'loading' | 'success' | 'error';
+  code: WordErrorCode | null;
+  message: string | null;
+}
+const wordExportState = ref<WordExportActionState>({
+  status: 'idle',
+  code: null,
+  message: null,
+});
+const isExportingWord = computed<boolean>(
+  () => wordExportState.value.status === 'loading',
+);
+const wordErrorCopy = computed<string>(() => {
+  const code = wordExportState.value.code;
+  switch (code) {
+    case 'NO_DOC':
+      return 'No tailored draft to export — generate one first.';
+    case 'RENDER_ERROR':
+      return wordExportState.value.message
+        ? `Word render failed: ${wordExportState.value.message}`
+        : 'Word render failed. Check the draft and try again.';
+    case 'IO_ERROR':
+      return wordExportState.value.message ?? 'Could not write the Word document to disk.';
+    default:
+      return wordExportState.value.message ?? 'Word export failed.';
+  }
+});
+
+async function onExportWord(): Promise<void> {
+  if (!sourceId.value || !doc.value) return;
+  const bridge = typeof window !== 'undefined' ? window.starWord : undefined;
+  if (!bridge) return;
+  wordExportState.value = { status: 'loading', code: null, message: null };
+  const opts: { locale?: string } = {};
+  if (typeof navigator !== 'undefined' && navigator.language) {
+    opts.locale = navigator.language;
+  }
+  const result = await bridge.export(sourceId.value, opts);
+  if (result.ok) {
+    wordExportState.value = { status: 'success', code: null, message: null };
+    const savedPath = result.record.savedPath;
+    $q.notify({
+      type: 'positive',
+      message: 'Word document exported',
+      caption: savedPath,
+      timeout: 6000,
+      actions: [
+        {
+          label: 'Reveal in folder',
+          color: 'white',
+          handler: () => {
+            void window.starWord?.reveal(savedPath);
+          },
+        },
+      ],
+    });
+  } else {
+    wordExportState.value = {
+      status: 'error',
+      code: result.code,
+      message: result.error,
+    };
+  }
 }
 
 /**

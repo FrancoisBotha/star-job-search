@@ -84,11 +84,11 @@ describe('TailorPage cover-letter tab — grounding + no-fabrication badging (AC
   });
 });
 
-describe('TailorPage cover-letter tab — Copy + Export-as-text/Markdown, no submission (AC5)', () => {
-  it('renders Copy + Export-as-text + Export-as-Markdown controls', () => {
-    expect(TAILOR).toMatch(/label="Copy"/);
-    expect(TAILOR).toMatch(/Export text|Export plain text|label="Export text"/);
-    expect(TAILOR).toMatch(/Export Markdown|label="Export Markdown"/);
+describe('TailorPage cover-letter tab — unified Export menu, no submission (AC5)', () => {
+  it('renders a unified Export menu (UEXP-004 collapses the prior Copy + Export-text + Export-Markdown buttons into a single dropdown)', () => {
+    expect(TAILOR).toMatch(/label="Export"/);
+    expect(TAILOR).toMatch(/data-test="export-menu"/);
+    expect(TAILOR).toMatch(/data-test="export-markdown"/);
   });
 
   it('has no submit / apply / send affordance anywhere (FR-015)', () => {

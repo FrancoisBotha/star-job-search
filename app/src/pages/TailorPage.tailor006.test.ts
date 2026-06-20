@@ -79,9 +79,9 @@ describe('TailorPage — intensity toggle + Copy/Export (AC6)', () => {
     expect(TAILOR).toMatch(/aggressive/);
   });
 
-  it('renders a Copy control and an Export-as-text/markdown control', () => {
-    expect(TAILOR).toMatch(/label="Copy"/);
-    expect(TAILOR).toMatch(/Export/);
+  it('renders an Export control wired to the tailor-export action (UEXP-004 replaces the prior Copy + Export-Markdown buttons with a single Export menu)', () => {
+    expect(TAILOR).toMatch(/label="Export"/);
+    expect(TAILOR).toMatch(/data-test="export-menu"/);
     expect(TAILOR).toMatch(/exportTailoredDoc\(/);
   });
 
