@@ -6,13 +6,15 @@
         <p class="sub">Every job extracted across your tracked boards. Star the ones worth a closer look.</p>
       </div>
       <div class="head__actions">
+        <!-- EXTR-017: clicking opens the Manage-hidden dialog instead of
+             bulk-restoring everything. The count label is preserved. -->
         <q-btn
           v-if="store.notInterestedCount > 0"
           outline
           no-caps
           class="restore-btn"
           :label="`Restore ${store.notInterestedCount} hidden`"
-          @click="store.restoreNotInterested()"
+          @click="manageHiddenOpen = true"
         />
         <!-- EXTR-012: destructive "delete all imported jobs" affordance.
              Disabled when the board is already empty so the user can never
@@ -48,6 +50,105 @@
             no-caps
             label="Delete all"
             @click="deleteAll"
+          />
+        </div>
+      </q-card>
+    </q-dialog>
+
+    <!-- EXTR-017: Manage 'Not interested' dialog. Lists each hidden job
+         with per-row Restore + Delete permanently actions plus dialog-level
+         Restore all / Delete all hidden affordances. Reuses .confirm card
+         styling — no new design tokens. -->
+    <q-dialog v-model="manageHiddenOpen">
+      <q-card class="confirm manage-hidden">
+        <div class="confirm__title font-serif">Manage hidden jobs</div>
+        <p class="confirm__body">
+          Jobs you've marked <em>Not interested</em>. Restore one back to the
+          board, or permanently delete it along with its match score and AI
+          review.
+        </p>
+        <ul class="hidden-list">
+          <li
+            v-for="j in store.notInterestedJobs"
+            :key="j.sourceId"
+            class="hidden-row"
+          >
+            <div class="hidden-row__meta">
+              <div class="hidden-row__title">{{ j.title || j.url }}</div>
+              <div class="hidden-row__sub">
+                {{ [j.company, j.location, j.hostname].filter(Boolean).join(' · ') }}
+              </div>
+            </div>
+            <div class="hidden-row__actions">
+              <q-btn
+                outline
+                no-caps
+                dense
+                label="Restore"
+                @click="store.restoreJob(j.sourceId)"
+              />
+              <q-btn
+                outline
+                no-caps
+                dense
+                color="negative"
+                label="Delete permanently"
+                @click="armDeleteHidden(j.sourceId)"
+              />
+            </div>
+          </li>
+        </ul>
+        <div class="confirm__actions">
+          <q-btn flat no-caps label="Restore all" @click="restoreAllHidden" />
+          <q-btn
+            flat
+            no-caps
+            color="negative"
+            label="Delete all hidden"
+            @click="confirmDeleteAllHidden = true"
+          />
+          <q-btn v-close-popup unelevated no-caps label="Done" />
+        </div>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="confirmDeleteHidden" persistent>
+      <q-card class="confirm">
+        <div class="confirm__title font-serif">Delete this job permanently?</div>
+        <p class="confirm__body">
+          This removes the job along with its match score and AI review. This
+          cannot be undone.
+        </p>
+        <div class="confirm__actions">
+          <q-btn v-close-popup flat no-caps label="Cancel" />
+          <q-btn
+            v-close-popup
+            unelevated
+            color="negative"
+            no-caps
+            label="Delete"
+            @click="performDeleteHidden"
+          />
+        </div>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="confirmDeleteAllHidden" persistent>
+      <q-card class="confirm">
+        <div class="confirm__title font-serif">Delete all hidden jobs?</div>
+        <p class="confirm__body">
+          This permanently removes every hidden (Not interested) job along with
+          their match scores and AI reviews. This cannot be undone.
+        </p>
+        <div class="confirm__actions">
+          <q-btn v-close-popup flat no-caps label="Cancel" />
+          <q-btn
+            v-close-popup
+            unelevated
+            color="negative"
+            no-caps
+            label="Delete all hidden"
+            @click="deleteAllHidden"
           />
         </div>
       </q-card>
@@ -145,7 +246,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useAppStore } from 'src/stores/app-store';
 import JobDetailDialog from 'src/components/JobDetailDialog.vue';
 import StarRating from 'src/components/StarRating.vue';
@@ -159,9 +260,50 @@ const selectedJob = ref<JobRecord | null>(null);
 const focusReview = ref(false);
 const confirmDeleteAll = ref(false);
 
+// EXTR-017: Manage 'Not interested' dialog state.
+const manageHiddenOpen = ref(false);
+const confirmDeleteHidden = ref(false);
+const confirmDeleteAllHidden = ref(false);
+const pendingDeleteSourceId = ref<string | null>(null);
+
 async function deleteAll() {
   await store.deleteAllJobs();
 }
+
+// AC4 — permanent delete is guarded by a confirm. The per-row 'Delete
+// permanently' button arms this confirm with the row's sourceId; only
+// after the confirm is accepted does the destructive call run.
+function armDeleteHidden(sourceId: string) {
+  pendingDeleteSourceId.value = sourceId;
+  confirmDeleteHidden.value = true;
+}
+
+async function performDeleteHidden() {
+  const sourceId = pendingDeleteSourceId.value;
+  pendingDeleteSourceId.value = null;
+  if (!sourceId) return;
+  await store.deleteJob(sourceId);
+}
+
+async function restoreAllHidden() {
+  await store.restoreNotInterested();
+}
+
+async function deleteAllHidden() {
+  const ids = store.notInterestedJobs.map((j) => j.sourceId);
+  for (const id of ids) {
+    await store.deleteJob(id);
+  }
+}
+
+// AC5 — when no hidden jobs remain (because the user restored or deleted
+// the last one), close the dialog cleanly.
+watch(
+  () => store.notInterestedCount,
+  (count) => {
+    if (count === 0) manageHiddenOpen.value = false;
+  },
+);
 
 /**
  * Strong-match threshold (Epic 5 §3) — a score reads as a "match" when its
@@ -275,6 +417,26 @@ onMounted(async () => {
 .delete-all-btn { color: var(--muted); &:hover { color: var(--negative, #c0392b); } }
 
 .confirm { padding: 28px 30px; max-width: 460px; }
+.manage-hidden { max-width: 560px; width: 560px; }
+.hidden-list {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 18px;
+  max-height: 360px;
+  overflow-y: auto;
+  border-top: 1px solid var(--hair);
+}
+.hidden-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--hair);
+  &__meta { flex: 1; min-width: 0; }
+  &__title { font-size: 14px; font-weight: 600; color: var(--text-2); }
+  &__sub { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+  &__actions { display: flex; gap: 6px; flex-shrink: 0; }
+}
 .confirm__title { font-size: 20px; }
 .confirm__body { font-size: 14px; color: var(--text-3); margin: 12px 0 18px; line-height: 1.45; }
 .confirm__actions { display: flex; justify-content: flex-end; gap: 8px; }
