@@ -130,23 +130,40 @@
       <q-btn v-if="canRetry" flat dense no-caps color="primary" label="Try again" @click="onGenerate" />
     </div>
 
+    <!-- TDE-007 AC4: code-driven copy for the TDE-005 engine error codes
+         (NO_API_KEY / NO_DEFAULT_MODEL / NO_DOC / MODEL_NOT_CAPABLE /
+         RATE_LIMITED / NETWORK / LLM_ERROR / SCHEMA_ERROR). The CV tab uses
+         this banner; the cover-letter tab still reads `actionState`. -->
+    <div
+      v-if="engineState.status === 'error'"
+      class="banner banner--error"
+      data-test="tailor-engine-error"
+    >
+      <span class="banner__text">{{ engineErrorCopy }}</span>
+      <q-btn v-if="canRetryEngine" flat dense no-caps color="primary" label="Try again" @click="onGenerate" />
+    </div>
+
     <div class="tailor__body">
       <!-- document canvas -->
       <div class="canvas app-scroll">
-        <!-- Generating spinner (FR-014). -->
-        <div v-if="isGenerating && !doc" class="loading">
+        <!-- Generating spinner (FR-014). Engine-side "propose" also surfaces
+             here so the CV tab shows a spinner while the LangGraph pipeline
+             is in flight (TDE-007 AC4). -->
+        <div v-if="(isGenerating && !doc) || (isProposing && !proposal)" class="loading">
           <q-spinner color="primary" size="32px" />
-          <p class="loading__text">Generating tailored draft…</p>
+          <p class="loading__text">{{ isProposing ? 'Generating proposal…' : 'Generating tailored draft…' }}</p>
         </div>
 
         <!-- Empty / not-yet-generated state. -->
-        <div v-else-if="!doc" class="empty">
+        <div v-else-if="!doc && !proposal" class="empty">
           <div class="font-serif empty__title">No draft yet</div>
           <p class="empty__sub">Generate a tailored {{ kind === 'cv' ? 'CV' : 'cover letter' }} for this job.</p>
           <q-btn unelevated color="primary" no-caps label="Generate" :disable="!tailoringAvailable" @click="onGenerate" />
         </div>
 
-        <!-- CV view: base vs tailored with diff highlighting (FR-003). -->
+        <!-- CV view: TDE-007 engine proposal (per-change accept/reject diff)
+             on top, then the persisted base-vs-tailored diff after the user
+             clicks Apply (FR-003 + Epic 9 §8). -->
         <div v-else-if="kind === 'cv'" class="paper paper--diff">
           <div class="provenance" data-test="provenance">
             <span class="provenance__tag">AI draft · advisory</span>
@@ -154,7 +171,114 @@
             <span v-if="store.currentCv" class="provenance__meta">built from CV v{{ store.currentCv.version }}</span>
           </div>
 
-          <div class="cv__columns">
+          <!-- Per-node progress chip (TDE-006 progress stream / TDE-007 AC4).
+               extract-jd-signals → plan-skills → generate-diffs → gate-filter
+               → refine → rescore. -->
+          <div
+            v-if="engineProgress"
+            class="engine-progress"
+            data-test="engine-progress"
+          >
+            <span class="engine-progress__label font-mono">PIPELINE</span>
+            <span class="engine-progress__phase">{{ phaseLabel(engineProgress.phase) }}</span>
+            <span v-if="engineProgress.pass" class="engine-progress__pass font-mono">pass {{ engineProgress.pass }}</span>
+            <span v-if="engineProgress.note" class="engine-progress__note">{{ engineProgress.note }}</span>
+          </div>
+
+          <!-- Engine proposal panel — per-change accept/reject diff with the
+               gate-validated reason, plus before→after match % from the
+               RefinementStats (TDE-007 AC1 + AC2). -->
+          <section
+            v-if="proposal"
+            class="proposal"
+            data-test="tailor-proposal"
+            aria-label="Tailoring proposal"
+          >
+            <header class="proposal__head">
+              <h4 class="proposal__title">Proposed changes</h4>
+              <span class="proposal__meta font-mono" data-test="match-delta">
+                MATCH {{ Math.round(proposal.refinementStats.initialPercent) }}% →
+                {{ Math.round(proposal.refinementStats.finalPercent) }}%
+              </span>
+              <q-btn
+                outline no-caps dense
+                label="Accept all"
+                data-test="accept-all"
+                :disable="!proposal.proposedChanges.length"
+                @click="acceptAllChanges"
+              />
+              <q-btn
+                unelevated color="primary" no-caps dense
+                label="Apply changes"
+                data-test="apply-accepted"
+                :loading="isApplying"
+                :disable="acceptedChangeIds.size === 0"
+                @click="onApplyAccepted"
+              />
+            </header>
+
+            <!-- High-risk warnings (TDE-007 AC2). Invented metrics, word-count
+                 blow-ups, and the "no injectable keywords" exit reason are
+                 flagged so the user can refuse a misleading edit before
+                 Apply persists anything. -->
+            <ul
+              v-if="warningEntries.length"
+              class="warnings"
+              data-test="tailor-warnings"
+              aria-label="High-risk warnings"
+            >
+              <li
+                v-for="(w, idx) in warningEntries"
+                :key="idx"
+                class="warnings__item"
+                :data-test="`warning-${w.kind}`"
+              >
+                <span class="warnings__kind font-mono">{{ warningKindLabel(w.kind) }}</span>
+                <span class="warnings__text">{{ w.message }}</span>
+              </li>
+            </ul>
+
+            <!-- Marker legend (TDE-007 AC1): every proposed change is tagged
+                 with one of  +  (append / add_skill, new content) ;
+                 ~  (replace, in-place modification) ;  –  (reorder, no new
+                 content). The marker is visible per row via changeMarker(). -->
+            <div class="changes__legend font-mono" aria-label="Change marker legend">
+              <span>+ add</span> · <span>~ replace</span> · <span>– reorder</span>
+            </div>
+            <ul v-if="proposal.proposedChanges.length" class="changes">
+              <li
+                v-for="(c, idx) in proposal.proposedChanges"
+                :key="idx"
+                class="changes__item"
+                :class="{ 'changes__item--accepted': acceptedChangeIds.has(idx) }"
+                :data-test="`proposed-change-${idx}`"
+              >
+                <span class="changes__marker font-mono" :data-test="`marker-${c.action}`">{{ changeMarker(c.action) }}</span>
+                <div class="changes__body">
+                  <div class="changes__path font-mono">{{ c.path }} · {{ c.action }}</div>
+                  <div class="changes__value">{{ renderChangeValue(c) }}</div>
+                  <div class="changes__reason">{{ c.reason }}</div>
+                </div>
+                <div class="changes__actions">
+                  <q-btn
+                    dense unelevated color="primary" no-caps
+                    :label="acceptedChangeIds.has(idx) ? 'Accepted' : 'Accept'"
+                    data-test="change-accept"
+                    @click="toggleAccept(idx)"
+                  />
+                  <q-btn
+                    dense outline no-caps class="ghost"
+                    label="Reject"
+                    data-test="change-reject"
+                    @click="rejectChange(idx)"
+                  />
+                </div>
+              </li>
+            </ul>
+            <p v-else class="changes__empty">No proposed changes — the engine found nothing safe to apply.</p>
+          </section>
+
+          <div v-if="doc" class="cv__columns">
             <section class="cv__column" aria-label="Base CV">
               <div class="cv__col-head">Base CV</div>
               <pre class="cv__text">{{ baseText }}</pre>
@@ -292,7 +416,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useQuasar } from 'quasar';
 import { useRoute, useRouter } from 'vue-router';
 import { useAppStore } from 'src/stores/app-store';
@@ -561,11 +685,174 @@ function setIntensity(next: StarTailorIntensity): void {
 
 function onGenerate(): void {
   if (!sourceId.value) return;
+  // TDE-007 AC1: the CV tab delegates to the TDE-005 diff engine; the
+  // cover-letter tab still uses the Epic 7 free-text rewrite path
+  // (generateTailoredDoc) — that path is explicitly untouched (AC4).
+  if (kind.value === 'cv') {
+    acceptedChangeIds.value = new Set();
+    void store.proposeTailorEngine(sourceId.value);
+    return;
+  }
   void store.generateTailoredDoc({
     sourceId: sourceId.value,
     kind: kind.value,
     intensity: intensity.value,
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* TDE-007 — Tailor diff-engine wiring (CV tab only).                  */
+/* ------------------------------------------------------------------ */
+const proposal = computed(() =>
+  sourceId.value ? store.tailorEngineProposals[sourceId.value] ?? null : null,
+);
+const engineState = computed(() =>
+  sourceId.value
+    ? store.tailorEngineStateFor(sourceId.value)
+    : { status: 'idle' as const, code: null, message: null },
+);
+const isProposing = computed<boolean>(() => engineState.value.status === 'loading');
+const isApplying = ref<boolean>(false);
+const engineProgress = computed(() =>
+  sourceId.value ? store.tailorEngineProgress[sourceId.value] ?? null : null,
+);
+
+/** Per-change acceptance — keyed by index into proposal.proposedChanges so
+ *  Accept toggles, "Accept all", and Reject all stay O(1). Cleared on every
+ *  new proposal request (see onGenerate). */
+const acceptedChangeIds = ref<Set<number>>(new Set());
+
+function toggleAccept(idx: number): void {
+  const next = new Set(acceptedChangeIds.value);
+  if (next.has(idx)) next.delete(idx);
+  else next.add(idx);
+  acceptedChangeIds.value = next;
+}
+
+function rejectChange(idx: number): void {
+  const next = new Set(acceptedChangeIds.value);
+  next.delete(idx);
+  acceptedChangeIds.value = next;
+}
+
+function acceptAllChanges(): void {
+  const all = proposal.value?.proposedChanges ?? [];
+  acceptedChangeIds.value = new Set(all.map((_, i) => i));
+}
+
+function changeMarker(action: string): string {
+  // +  appended/added (new content) ;  ~  in-place replace (modified) ;
+  // –  reorder (re-arranged but no new content).
+  if (action === 'append' || action === 'add_skill') return '+';
+  if (action === 'replace') return '~';
+  return '–';
+}
+
+function renderChangeValue(c: { value: unknown }): string {
+  if (typeof c.value === 'string') return c.value;
+  if (Array.isArray(c.value)) return c.value.join(', ');
+  try {
+    return JSON.stringify(c.value);
+  } catch {
+    return String(c.value);
+  }
+}
+
+const PHASE_LABELS: Record<string, string> = {
+  'extract-jd-signals': 'extract JD signals',
+  'plan-skills': 'plan skills',
+  'generate-diffs': 'generate diffs',
+  'gate-filter': 'gate filter',
+  refine: 'refine',
+  rescore: 'rescore',
+  done: 'done',
+};
+function phaseLabel(phase: string): string {
+  return PHASE_LABELS[phase] ?? phase;
+}
+
+function warningKindLabel(kind: string): string {
+  if (kind === 'invented_metric') return 'invented metric';
+  if (kind === 'word_count_blowup') return 'word-count jump';
+  if (kind === 'no_injectable_keywords') return 'no injectable gap';
+  return kind;
+}
+
+/** Surface refine warnings + a synthetic "non-injectable gap" entry when
+ *  the refine loop exited because no keywords were injectable — the user
+ *  must see that the engine couldn't close the gap so they don't assume
+ *  silent success (TDE-007 AC2). */
+interface ProposalWarning {
+  kind: 'invented_metric' | 'word_count_blowup' | 'no_injectable_keywords';
+  message: string;
+  value: string;
+}
+const warningEntries = computed<ProposalWarning[]>(() => {
+  const p = proposal.value;
+  if (!p) return [];
+  const out: ProposalWarning[] = [];
+  for (const w of p.warnings) {
+    out.push({ kind: w.kind as ProposalWarning['kind'], message: w.message, value: w.value });
+  }
+  if (p.refinementStats.exitReason === 'no_injectable_keywords') {
+    out.push({
+      kind: 'no_injectable_keywords',
+      message:
+        'Refine pass found no injectable keywords — gaps remain that the engine cannot close without inventing evidence.',
+      value: '',
+    });
+  }
+  return out;
+});
+
+const engineErrorCopy = computed<string>(() => {
+  const code = engineState.value.code;
+  switch (code) {
+    case 'NO_API_KEY':
+      return 'No OpenRouter API key configured. Add one in Settings.';
+    case 'NO_DEFAULT_MODEL':
+      return 'No default model selected. Choose one in Settings.';
+    case 'NO_DOC':
+      return 'No CV or job available to tailor — make sure a CV is uploaded and the job is selected.';
+    case 'MODEL_NOT_CAPABLE':
+      return 'The selected model cannot return structured output. Choose another model in Settings.';
+    case 'RATE_LIMITED':
+      return 'Rate-limited by OpenRouter — try again in a moment.';
+    case 'NETWORK':
+      return 'Network error reaching OpenRouter. Check your connection and try again.';
+    case 'SCHEMA_ERROR':
+    case 'LLM_ERROR':
+      return engineState.value.message ?? 'The model returned an unexpected response.';
+    default:
+      return engineState.value.message ?? 'Tailor engine failed.';
+  }
+});
+const canRetryEngine = computed<boolean>(() => {
+  const code = engineState.value.code;
+  return code === 'RATE_LIMITED' || code === 'NETWORK' || code === 'LLM_ERROR';
+});
+
+async function onApplyAccepted(): Promise<void> {
+  if (!sourceId.value || !proposal.value) return;
+  const all = proposal.value.proposedChanges;
+  const accepted = [] as typeof all;
+  for (let i = 0; i < all.length; i += 1) {
+    if (acceptedChangeIds.value.has(i) && all[i]) accepted.push(all[i]!);
+  }
+  if (!accepted.length) return;
+  const verifiedSkills = proposal.value.skillVerdicts
+    .filter((v) => v.accepted)
+    .map((v) => v.skill);
+  isApplying.value = true;
+  try {
+    await store.applyTailorEngine({
+      sourceId: sourceId.value,
+      accepted,
+      ...(verifiedSkills.length ? { verifiedSkills } : {}),
+    });
+  } finally {
+    isApplying.value = false;
+  }
 }
 
 async function onAccept(suggestionId: string): Promise<void> {
@@ -726,7 +1013,12 @@ async function onRevealLastPdf(): Promise<void> {
   await store.revealPdfExport(rec.savedPath);
 }
 
+let unsubscribeEngineProgress: (() => void) | null = null;
+
 onMounted(async () => {
+  // TDE-007 AC4: subscribe to the per-node progress stream so the CV tab
+  // can render the current LangGraph phase while the engine runs.
+  unsubscribeEngineProgress = store.subscribeTailorEngineProgress();
   if (!sourceId.value) return;
   await store.hydrateApiKeyStatus();
   await store.hydratePreferredModels();
@@ -736,6 +1028,13 @@ onMounted(async () => {
   await store.getTailoredDoc({ sourceId: sourceId.value, kind: 'cv' });
   await store.getTailoredDoc({ sourceId: sourceId.value, kind: 'cover-letter' });
   await store.getScore(sourceId.value);
+});
+
+onBeforeUnmount(() => {
+  if (unsubscribeEngineProgress) {
+    unsubscribeEngineProgress();
+    unsubscribeEngineProgress = null;
+  }
 });
 </script>
 

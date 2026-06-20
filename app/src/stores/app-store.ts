@@ -110,6 +110,26 @@ const IDLE_PDF_EXPORT_STATE: PdfExportActionState = {
 export type PdfExportRecord = StarPdfExportRecord;
 
 /**
+ * Per-sourceId action state for the TDE-005 tailor diff engine (TDE-007 /
+ * Epic 9 §8). Drives the CV tab's "Generate proposal" → "Apply accepted"
+ * flow with the stable [[StarTailorEngineErrorCode]] (NO_API_KEY /
+ * NO_DEFAULT_MODEL / NO_DOC / MODEL_NOT_CAPABLE / RATE_LIMITED / NETWORK /
+ * LLM_ERROR / SCHEMA_ERROR) so the UI can render specific copy without
+ * parsing exception text (NFR-004 carryover).
+ */
+export interface TailorEngineActionState {
+  status: 'idle' | 'loading' | 'error';
+  code: StarTailorEngineErrorCode | null;
+  message: string | null;
+}
+
+const IDLE_TAILOR_ENGINE_STATE: TailorEngineActionState = {
+  status: 'idle',
+  code: null,
+  message: null,
+};
+
+/**
  * Composite key for the tailored-docs map. Keying by both `sourceId` and
  * `kind` is required because a single job can have both a tailored CV and
  * a tailored cover letter cached in parallel — both are valid drafts at
@@ -370,6 +390,29 @@ interface AppState {
    * Tailor view.
    */
   pdfExportRecords: Record<string, PdfExportRecord>;
+  /**
+   * TDE-005 tailor-engine proposals keyed by `sourceId` (TDE-007 / Epic 9 §8).
+   * Holds the full StarTailorEngineResult — proposed changes (gate-validated),
+   * rejected changes, refine warnings, RefinementStats (before→after %),
+   * working document, and skill verdicts — so the CV tab can render the
+   * per-change accept/reject diff without re-running the engine on each click.
+   * PERSISTS NOTHING: the renderer carries the proposal until the user
+   * accepts a subset via [[applyTailorEngine]].
+   */
+  tailorEngineProposals: Record<string, StarTailorEngineResult>;
+  /**
+   * Per-sourceId action state for the TDE-005 engine (TDE-007). Drives the
+   * "Generating proposal…" spinner + per-code error banner on the CV tab.
+   */
+  tailorEngineStates: Record<string, TailorEngineActionState>;
+  /**
+   * Last per-node progress event streamed from main over
+   * `tailor-engine:progress` (TDE-006). Keyed by `sourceId` — drives the
+   * per-phase progress chip on the CV tab so the user sees the LangGraph
+   * pipeline moving through extract-JD-signals → plan-skills → generate-diffs
+   * → gate-filter → refine → rescore.
+   */
+  tailorEngineProgress: Record<string, StarTailorEngineProgressEvent>;
 }
 
 export const useAppStore = defineStore('app', {
@@ -413,6 +456,9 @@ export const useAppStore = defineStore('app', {
     tailorStates: {},
     pdfExportStates: {},
     pdfExportRecords: {},
+    tailorEngineProposals: {},
+    tailorEngineStates: {},
+    tailorEngineProgress: {},
   }),
 
   getters: {
@@ -648,6 +694,15 @@ export const useAppStore = defineStore('app', {
      * defence-in-depth gate, not the only one.
      */
     isTailoringAvailable: (state): boolean => state.apiKeyStatus.present,
+    /**
+     * Per-sourceId TDE-005 engine action state lookup (TDE-007 / Epic 9 §8).
+     * Always returns a defined snapshot so the CV tab can render without
+     * nullish guards — defaults to the shared `idle` constant.
+     */
+    tailorEngineStateFor:
+      (state) =>
+      (sourceId: string): TailorEngineActionState =>
+        state.tailorEngineStates[sourceId] ?? IDLE_TAILOR_ENGINE_STATE,
     /**
      * Per-sourceId PDF export action state lookup (PDFEX-005 / AC4).
      * Always returns a defined snapshot so the Tailor view can render
@@ -1498,6 +1553,145 @@ export const useAppStore = defineStore('app', {
         };
         return { ok: false, code: 'LLM_ERROR', error: message };
       }
+    },
+    /**
+     * Run the TDE-005 tailor diff-engine for a job via `tailor:propose`
+     * (TDE-007 / Epic 9 §8). Replaces the Epic 7 free-text rewrite on the
+     * CV tab — main builds the TailoringDocument, runs the bounded LangGraph
+     * pipeline (extract-JD-signals → plan-skills → generate-diffs →
+     * gate-filter → refine → rescore), and returns the gate-validated
+     * TailorEngineResult. PERSISTS NOTHING — the renderer carries the
+     * proposal until the user clicks Apply on a subset via
+     * [[applyTailorEngine]]. Manages the per-source action state machine
+     * (idle → loading → idle on success / error with the stable
+     * [[StarTailorEngineErrorCode]]).
+     */
+    async proposeTailorEngine(
+      sourceId: string,
+    ): Promise<StarTailorProposeResult | undefined> {
+      const bridge =
+        typeof window !== 'undefined' ? window.starTailorEngine : undefined;
+      if (!bridge) return undefined;
+      if (!this.reviewDisclosureAcknowledged) {
+        this.hydrateReviewDisclosure();
+        if (!this.reviewDisclosureAcknowledged) return undefined;
+      }
+      this.tailorEngineStates[sourceId] = {
+        status: 'loading',
+        code: null,
+        message: null,
+      };
+      try {
+        const result = await bridge.propose({ sourceId });
+        if (result.ok) {
+          this.tailorEngineProposals[sourceId] = result.result;
+          this.tailorEngineStates[sourceId] = {
+            status: 'idle',
+            code: null,
+            message: null,
+          };
+        } else {
+          this.tailorEngineStates[sourceId] = {
+            status: 'error',
+            code: result.code,
+            message: result.error,
+          };
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'propose failed';
+        this.tailorEngineStates[sourceId] = {
+          status: 'error',
+          code: 'LLM_ERROR',
+          message,
+        };
+        return { ok: false, code: 'LLM_ERROR', error: message };
+      }
+    },
+    /**
+     * Apply the user-accepted subset of ProposedChanges deterministically via
+     * `tailor:apply` (TDE-007 / Epic 9 §8). Main re-applies through the
+     * TDE-002 gates (NO LLM call — FR-012 / NFR-002 hard boundary), persists
+     * the resulting CV draft via the Epic 7 `tailored_docs` store, and
+     * triggers the Epic 5 deterministic rescore. The renderer mirrors the
+     * persisted draft on the CV key and refreshes the live MatchScore so the
+     * Tailor view's star/% chip updates without re-computing anything itself.
+     */
+    async applyTailorEngine(input: {
+      sourceId: string;
+      accepted: StarProposedChange[];
+      verifiedSkills?: string[];
+    }): Promise<StarTailorApplyResult | undefined> {
+      const bridge =
+        typeof window !== 'undefined' ? window.starTailorEngine : undefined;
+      if (!bridge) return undefined;
+      const proposal = this.tailorEngineProposals[input.sourceId];
+      if (!proposal) {
+        const state: TailorEngineActionState = {
+          status: 'error',
+          code: 'NO_DOC',
+          message: 'No proposal in flight — generate first.',
+        };
+        this.tailorEngineStates[input.sourceId] = state;
+        return { ok: false, code: 'NO_DOC', error: state.message ?? 'no proposal' };
+      }
+      this.tailorEngineStates[input.sourceId] = {
+        status: 'loading',
+        code: null,
+        message: null,
+      };
+      try {
+        const payload: StarTailorApplyInput = {
+          sourceId: input.sourceId,
+          doc: proposal.doc,
+          accepted: input.accepted,
+          ...(input.verifiedSkills ? { verifiedSkills: input.verifiedSkills } : {}),
+        };
+        const result = await bridge.apply(payload);
+        if (result.ok) {
+          this.tailoredDocs[tailorKey(input.sourceId, 'cv')] = result.doc;
+          this.tailorEngineStates[input.sourceId] = {
+            status: 'idle',
+            code: null,
+            message: null,
+          };
+          // FR-012 — mirror the freshly-recomputed Epic 5 score from main.
+          // The score itself is computed by the deterministic scorer inside
+          // tailor:apply; the renderer never computes any score.
+          await this.getScore(input.sourceId).catch(() => {});
+        } else {
+          this.tailorEngineStates[input.sourceId] = {
+            status: 'error',
+            code: result.code,
+            message: result.error,
+          };
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'apply failed';
+        this.tailorEngineStates[input.sourceId] = {
+          status: 'error',
+          code: 'LLM_ERROR',
+          message,
+        };
+        return { ok: false, code: 'LLM_ERROR', error: message };
+      }
+    },
+    /**
+     * Subscribe to `tailor-engine:progress` events for the lifetime of the
+     * Tailor view (TDE-006 / TDE-007 AC4). Each event is stored under
+     * `tailorEngineProgress[sourceId]` so the CV tab can render the current
+     * pipeline phase. Returns an unsubscribe function the caller invokes on
+     * unmount.
+     */
+    subscribeTailorEngineProgress(): () => void {
+      const bridge =
+        typeof window !== 'undefined' ? window.starTailorEngine : undefined;
+      if (!bridge) return () => {};
+      return bridge.onProgress((event) => {
+        if (!event || typeof event.sourceId !== 'string') return;
+        this.tailorEngineProgress[event.sourceId] = event;
+      });
     },
     /**
      * Export a tailored draft via `tailor:export` (TAILOR-005 AC1 /
