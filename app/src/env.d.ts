@@ -60,6 +60,15 @@ interface StarProfile {
   links: string[];
   skills: string[];
   strengthScore: number;
+  /** DEAL-002 — title/description substrings that disqualify a job.
+   *  Empty by default so the feature is inert until the user adds rules. */
+  dealbreakerKeywords: string[];
+  /** DEAL-002 — company names the user never wants to apply to.
+   *  Empty by default. */
+  dealbreakerCompanies: string[];
+  /** DEAL-002 — hard salary floor; jobs whose stated salary is below this
+   *  fail the rule. `null` (default) disables the rule. */
+  dealbreakerSalaryMin: number | null;
   updatedAt: number;
 }
 

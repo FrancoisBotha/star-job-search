@@ -36,6 +36,13 @@ export interface ProfileRecord {
   links: string[];
   skills: string[];
   strengthScore: number;
+  /** DEAL-002 — title/description substrings that disqualify a job. */
+  dealbreakerKeywords: string[];
+  /** DEAL-002 — company names the user never wants to apply to. */
+  dealbreakerCompanies: string[];
+  /** DEAL-002 — hard floor; jobs whose stated salary is below this fail
+   *  the rule. `null` disables the rule (feature inert by default). */
+  dealbreakerSalaryMin: number | null;
   updatedAt: number;
 }
 
@@ -77,9 +84,27 @@ const CREATE_TABLE_SQL = `
     links            TEXT,
     skills           TEXT,
     strength_score   INTEGER NOT NULL DEFAULT 0,
+    dealbreaker_keywords    TEXT,
+    dealbreaker_companies   TEXT,
+    dealbreaker_salary_min  INTEGER,
     updated_at       INTEGER NOT NULL
   )
 `;
+
+/**
+ * Additive column migrations for the profile table. Each entry runs once
+ * per fresh install (the column is missing) and is a no-op on every
+ * subsequent boot. Guarded by PRAGMA table_info so existing databases —
+ * including ones created before the column was added — pick up the new
+ * column without losing data.
+ *
+ * DEAL-002 — dealbreaker rule fields.
+ */
+const ADDITIVE_COLUMNS: ReadonlyArray<{ name: string; ddl: string }> = [
+  { name: 'dealbreaker_keywords', ddl: 'ALTER TABLE profile ADD COLUMN dealbreaker_keywords TEXT' },
+  { name: 'dealbreaker_companies', ddl: 'ALTER TABLE profile ADD COLUMN dealbreaker_companies TEXT' },
+  { name: 'dealbreaker_salary_min', ddl: 'ALTER TABLE profile ADD COLUMN dealbreaker_salary_min INTEGER' },
+];
 
 interface ProfileRow {
   id: string;
@@ -94,6 +119,9 @@ interface ProfileRow {
   links: string | null;
   skills: string | null;
   strength_score: number | null;
+  dealbreaker_keywords: string | null;
+  dealbreaker_companies: string | null;
+  dealbreaker_salary_min: number | null;
   updated_at: number;
 }
 
@@ -125,6 +153,9 @@ function emptyProfile(): ProfileRecord {
     links: [],
     skills: [],
     strengthScore: 0,
+    dealbreakerKeywords: [],
+    dealbreakerCompanies: [],
+    dealbreakerSalaryMin: null,
     updatedAt: 0,
   };
 }
@@ -142,6 +173,9 @@ function rowToProfile(row: ProfileRow): ProfileRecord {
     links: parseStringArray(row.links),
     skills: parseStringArray(row.skills),
     strengthScore: row.strength_score ?? 0,
+    dealbreakerKeywords: parseStringArray(row.dealbreaker_keywords),
+    dealbreakerCompanies: parseStringArray(row.dealbreaker_companies),
+    dealbreakerSalaryMin: row.dealbreaker_salary_min,
     updatedAt: row.updated_at,
   };
 }
@@ -149,16 +183,32 @@ function rowToProfile(row: ProfileRow): ProfileRecord {
 export function createProfileStore(db: ProfileDatabaseLike): ProfileStore {
   db.exec(CREATE_TABLE_SQL);
 
+  // Additive migration for databases created before a column was added.
+  // SQLite errors when ALTER TABLE adds a duplicate column; on a re-run the
+  // column already exists so we just swallow that one error. Other errors
+  // would still be surfaced by better-sqlite3 (e.g. table missing) but
+  // CREATE TABLE IF NOT EXISTS above guarantees the table is there.
+  for (const col of ADDITIVE_COLUMNS) {
+    try {
+      db.exec(col.ddl);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column name/i.test(message)) throw err;
+    }
+  }
+
   const selectStmt = db.prepare('SELECT * FROM profile WHERE id = ?');
   const upsertStmt = db.prepare(
     `INSERT OR REPLACE INTO profile (
        id, name, target_role, years_experience, location, work_mode,
        salary_min, salary_currency, linkedin_url, links, skills,
-       strength_score, updated_at
+       strength_score, dealbreaker_keywords, dealbreaker_companies,
+       dealbreaker_salary_min, updated_at
      ) VALUES (
        @id, @name, @target_role, @years_experience, @location, @work_mode,
        @salary_min, @salary_currency, @linkedin_url, @links, @skills,
-       @strength_score, @updated_at
+       @strength_score, @dealbreaker_keywords, @dealbreaker_companies,
+       @dealbreaker_salary_min, @updated_at
      )`,
   );
 
@@ -189,6 +239,12 @@ export function createProfileStore(db: ProfileDatabaseLike): ProfileStore {
         links: input.links ?? current.links,
         skills: input.skills ?? current.skills,
         strengthScore: input.strengthScore !== undefined ? input.strengthScore : current.strengthScore,
+        dealbreakerKeywords: input.dealbreakerKeywords ?? current.dealbreakerKeywords,
+        dealbreakerCompanies: input.dealbreakerCompanies ?? current.dealbreakerCompanies,
+        dealbreakerSalaryMin:
+          input.dealbreakerSalaryMin !== undefined
+            ? input.dealbreakerSalaryMin
+            : current.dealbreakerSalaryMin,
         updatedAt: Date.now(),
       };
       upsertStmt.run({
@@ -204,6 +260,9 @@ export function createProfileStore(db: ProfileDatabaseLike): ProfileStore {
         links: JSON.stringify(next.links),
         skills: JSON.stringify(next.skills),
         strength_score: next.strengthScore,
+        dealbreaker_keywords: JSON.stringify(next.dealbreakerKeywords),
+        dealbreaker_companies: JSON.stringify(next.dealbreakerCompanies),
+        dealbreaker_salary_min: next.dealbreakerSalaryMin,
         updated_at: next.updatedAt,
       });
       return next;
