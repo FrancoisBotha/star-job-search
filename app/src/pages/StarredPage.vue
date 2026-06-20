@@ -148,16 +148,24 @@ async function openEval(sourceId: string): Promise<void> {
   }
   if (store.hasEvalReport(sourceId) && !store.isEvalReportStale(sourceId)) {
     await store.getEvalReport(sourceId);
+    void router.push({ name: 'eval', query: { sourceId } });
     return;
   }
   await store.generateEval(sourceId);
+  // EVAL-006 — navigate to the report view regardless of outcome; the view
+  // renders per-code loading/error states for failures so the user lands on a
+  // surface that explains what happened, not a silently-failed click.
+  void router.push({ name: 'eval', query: { sourceId } });
 }
 async function confirmWebResearchDisclosure(): Promise<void> {
   await store.acknowledgeWebResearchDisclosure();
   const id = pendingEvalSourceId.value;
   showWebResearchDisclosure.value = false;
   pendingEvalSourceId.value = null;
-  if (id) await store.generateEval(id);
+  if (id) {
+    await store.generateEval(id);
+    void router.push({ name: 'eval', query: { sourceId: id } });
+  }
 }
 
 const STRONG_STARS = 4;

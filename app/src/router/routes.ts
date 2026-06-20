@@ -25,6 +25,9 @@ const routes: RouteRecordRaw[] = [
       // "Discover" highlighted in the sidebar (see MainLayout).
       { path: 'job', name: 'jobdetail', component: () => import('pages/JobDetailPage.vue') },
       { path: 'tailor', name: 'tailor', component: () => import('pages/TailorPage.vue') },
+      // EVAL-006 — Job Evaluation Report view (Epic 14). Reached from the
+      // Starred tile's "Eval" CTA.
+      { path: 'eval', name: 'eval', component: () => import('pages/EvalReportPage.vue') },
     ],
   },
 
