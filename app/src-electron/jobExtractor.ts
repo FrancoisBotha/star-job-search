@@ -97,7 +97,12 @@ export type ProgressEvent =
   | { phase: 'done'; imported: number; skipped: number; total: number; pages: number }
   | {
       phase: 'error';
-      kind: 'captcha' | 'failure';
+      // EXTR-018 extended the original captcha/failure pair with two FR-SCAN-010
+      // graceful-stop kinds: `gated` (login wall / authenticated interstitial)
+      // and `unsupported` (selector-learning + relearn both yielded zero, so
+      // the board can't be automated — we stop instead of hanging on
+      // 'Discovering listing…').
+      kind: 'captcha' | 'failure' | 'gated' | 'unsupported';
       message: string;
       imported: number;
       skipped: number;
@@ -113,6 +118,10 @@ export interface JobExtractorDeps {
   pageCap?: number;
   /** Pause between navigations and page-clicks. Defaults to 250ms (EXTR-005). */
   throttleMs?: number;
+  /** EXTR-018: per-call ceiling on a selector-learning LLM invocation. If the
+   *  invocation hasn't resolved by then we abort the run rather than hang on
+   *  'Discovering listing…'. Defaults to 30 000 ms. */
+  discoverTimeoutMs?: number;
   /** Sleep implementation — injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -159,6 +168,11 @@ interface ExtractorState {
 
 const DEFAULT_PAGE_CAP = 5;
 const DEFAULT_THROTTLE_MS = 250;
+// EXTR-018: max time we wait for a single selector-learning LLM call. Picked
+// well above a normal structured-output round-trip so honest slow responses
+// still complete, but small enough that a wedged provider doesn't leave the
+// Discover UI stuck on 'Discovering listing…'.
+const DEFAULT_DISCOVER_TIMEOUT_MS = 30_000;
 
 // EXTR-005: CAPTCHA / bot-challenge markers. We pattern-match against the
 // page body. False positives are preferred over false negatives — the run
@@ -183,10 +197,40 @@ const CAPTCHA_MARKERS: readonly string[] = [
   'security check',
 ];
 
+// EXTR-018 / FR-SCAN-010: login-wall + authenticated-gate detection. Listed
+// separately from CAPTCHA so the terminal error event can carry an honest kind
+// — a board that needs sign-in is a different remediation than a CAPTCHA
+// challenge (the user can usually swap to a public board).
+const GATED_MARKERS: readonly string[] = [
+  'sign in to continue',
+  'please sign in',
+  'sign in to view',
+  'log in to continue',
+  'please log in',
+  'log in to view',
+  'login required',
+  'login to continue',
+  'must be signed in',
+  'must be logged in',
+  'you need to sign in',
+  'you need to log in',
+  'authentication required',
+  'access denied',
+];
+
 function looksLikeCaptcha(text: string | null | undefined): boolean {
   if (!text) return false;
   const lower = text.toLowerCase();
   for (const m of CAPTCHA_MARKERS) {
+    if (lower.includes(m)) return true;
+  }
+  return false;
+}
+
+function looksLikeGated(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  for (const m of GATED_MARKERS) {
     if (lower.includes(m)) return true;
   }
   return false;
@@ -200,8 +244,56 @@ class CaptchaError extends Error {
   }
 }
 
+// EXTR-018: the board is sitting behind a login wall / authenticated-gate.
+// Per FR-SCAN-010 we stop the run cleanly — never attempt to authenticate or
+// otherwise bypass the gate.
+class GatedBoardError extends Error {
+  readonly kind = 'gated' as const;
+  constructor(message = 'Login or authentication required — extraction halted') {
+    super(message);
+    this.name = 'GatedBoardError';
+  }
+}
+
+// EXTR-018: selector-learning + the relearn fallback both produced zero usable
+// cards, or the learning LLM call exceeded `discoverTimeoutMs`. Either way the
+// board can't be automated — stop with a terminal state instead of hanging.
+class UnsupportedBoardError extends Error {
+  readonly kind = 'unsupported' as const;
+  constructor(
+    message = 'Could not learn usable selectors for this board — extraction halted',
+  ) {
+    super(message);
+    this.name = 'UnsupportedBoardError';
+  }
+}
+
 const defaultSleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+// EXTR-018: race a selector-learning LLM call against a hard ceiling so a
+// wedged structured-output round-trip can't hang the run. A zero/negative
+// timeout disables the bound — convenient for tests that stub the LLM.
+async function withDiscoverTimeout<T>(p: Promise<T>, timeoutMs: number): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) return p;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new UnsupportedBoardError(
+              `Selector discovery timed out after ${timeoutMs}ms — extraction halted`,
+            ),
+          ),
+        timeoutMs,
+      );
+      p.then(resolve, reject);
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function deriveStubFromCardText(text: string): { title: string; company?: string } {
   const trimmed = text.trim().replace(/\s+/g, ' ');
@@ -224,6 +316,7 @@ export function createJobExtractor(deps: JobExtractorDeps): {
     onProgress,
     pageCap = DEFAULT_PAGE_CAP,
     throttleMs = DEFAULT_THROTTLE_MS,
+    discoverTimeoutMs = DEFAULT_DISCOVER_TIMEOUT_MS,
     sleep = defaultSleep,
     now = () => Date.now(),
   } = deps;
@@ -258,16 +351,25 @@ export function createJobExtractor(deps: JobExtractorDeps): {
     if (throttleMs > 0) await sleep(throttleMs);
   };
 
-  const assertNoCaptcha = async (where: string): Promise<void> => {
+  const assertNoBlocker = async (where: string): Promise<void> => {
     let body = '';
     try {
       body = await browser.getText('body');
     } catch {
       body = '';
     }
+    // EXTR-018: gated check runs alongside the existing captcha check so a
+    // login-walled board produces a distinct terminal kind. Captcha takes
+    // priority when both match (the markers can overlap on Cloudflare-style
+    // interstitials).
     if (looksLikeCaptcha(body)) {
       throw new CaptchaError(
         `CAPTCHA or bot challenge detected on ${where} — extraction halted`,
+      );
+    }
+    if (looksLikeGated(body)) {
+      throw new GatedBoardError(
+        `Login or authentication required on ${where} — extraction halted`,
       );
     }
   };
@@ -295,7 +397,7 @@ export function createJobExtractor(deps: JobExtractorDeps): {
     }
     tele.hostname = hostname;
     // AC1: halt before enumerate if the board is gating us with a challenge.
-    await assertNoCaptcha('search page');
+    await assertNoBlocker('search page');
     return { hostname };
   }
 
@@ -307,7 +409,10 @@ export function createJobExtractor(deps: JobExtractorDeps): {
       ? await browser.getOuterHtml('body').catch(() => '')
       : await browser.getText('body').catch(() => '');
     const structured = llm.withStructuredOutput(SelectorSchema, { name: 'SelectorSet' });
-    const result = await structured.invoke(
+    // EXTR-018 AC1: bound the LLM call so a wedged provider can't strand the
+    // Discover UI on 'Discovering listing…'. The timeout flips the run into a
+    // terminal 'unsupported' state via the run() catch.
+    const invoked = structured.invoke(
       `Inspect this job-board listing page (host=${hostname}).
 Return CSS selectors that identify:
   - cardSelector:  every job-posting card on the page
@@ -316,6 +421,7 @@ Return CSS selectors that identify:
 HTML sample:
 ${(sample ?? '').slice(0, 12000)}`,
     );
+    const result = await withDiscoverTimeout(invoked, discoverTimeoutMs);
 
     const selectorsObj: Record<string, string> = {
       cardSelector: result.cardSelector,
@@ -397,6 +503,12 @@ ${(sample ?? '').slice(0, 12000)}`,
       foundOnPage: added,
       totalFound: candidates.length,
     });
+    // EXTR-018 AC1: if even the relearn fallback enumerated nothing, the board
+    // can't be automated — stop with a terminal error instead of looping back
+    // to relearn or wedging the UI on 'Discovering listing…'.
+    if (added === 0 && state.relearned) {
+      throw new UnsupportedBoardError();
+    }
     return { candidates, seenIds: seen, lastAdded: added };
   }
 
@@ -487,6 +599,11 @@ ${(sample ?? '').slice(0, 12000)}`,
       if (looksLikeCaptcha(body)) {
         throw new CaptchaError(
           `CAPTCHA or bot challenge detected on detail page ${cand.url} — extraction halted`,
+        );
+      }
+      if (looksLikeGated(body)) {
+        throw new GatedBoardError(
+          `Login or authentication required on detail page ${cand.url} — extraction halted`,
         );
       }
 
@@ -645,8 +762,16 @@ ${(body ?? '').slice(0, 16000)}`,
         // AC1 + AC3: surface failure cleanly. Jobs already extracted have
         // already been persisted incrementally inside extractDetailsNode, so
         // the board is never left in a partial / corrupted state.
-        const kind: 'captcha' | 'failure' =
-          err instanceof CaptchaError ? 'captcha' : 'failure';
+        // EXTR-018: pick the most specific terminal kind so the renderer can
+        // show an actionable message (FR-SCAN-010 graceful-stop).
+        const kind: 'captcha' | 'failure' | 'gated' | 'unsupported' =
+          err instanceof CaptchaError
+            ? 'captcha'
+            : err instanceof GatedBoardError
+              ? 'gated'
+              : err instanceof UnsupportedBoardError
+                ? 'unsupported'
+                : 'failure';
         const message = err instanceof Error ? err.message : String(err);
         const result: ExtractorResult = {
           imported: tele.persistedCount,

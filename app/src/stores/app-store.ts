@@ -1004,6 +1004,20 @@ export const useAppStore = defineStore('app', {
         } else {
           this.isExtracting = true;
         }
+        // EXTR-018 AC3: surface a clear, actionable message for FR-SCAN-010
+        // graceful-stop terminations (login-walled or un-learnable boards) so
+        // the Discover progress bar is distinct from the "No job listings
+        // found" empty state. CAPTCHA + generic failures fall through to the
+        // event's own `message` field.
+        if (phase === 'error') {
+          const kind = typeof e.kind === 'string' ? e.kind : 'failure';
+          if (kind === 'gated' || kind === 'unsupported') {
+            this.extractError =
+              "This board needs login or isn't supported for automated scanning — try a public board like Seek or Indeed.";
+          } else {
+            this.extractError = message ?? 'Extraction halted.';
+          }
+        }
       });
     },
     /**
