@@ -153,6 +153,7 @@ const TITLES: Record<string, string> = {
   starred: 'Starred',
   applications: 'Applications',
   profile: 'Profile',
+  enrich: 'CV Enrichment',
   help: 'Help',
   settings: 'Settings',
   jobdetail: 'Senior Product Designer',
@@ -190,6 +191,7 @@ const primaryNav = computed(() => [
 ]);
 const setupNav = [
   { name: 'profile', label: 'Profile', icon: ic.user },
+  { name: 'enrich', label: 'CV Enrichment', icon: ic.star },
   { name: 'help', label: 'Help', icon: ic.help },
   { name: 'settings', label: 'Settings', icon: ic.settings },
 ];

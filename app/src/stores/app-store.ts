@@ -486,6 +486,41 @@ interface AppState {
    * session, no extra API key, content treated as untrusted).
    */
   webResearchSetting: StarWebResearchSetting | null;
+  /**
+   * ENRICH-006 — CV Enrichment flow state. The 3-step Analyze → Questions →
+   * Review flow progresses through these statuses; only ever one in-flight
+   * step at a time because the user steers it from a single screen.
+   *   idle        — fresh page, no analyze run yet.
+   *   analyzing   — `enrich:analyze` IPC in flight.
+   *   analyzed    — Step 1 ready (weak-bullet report cached).
+   *   questioning — `enrich:questions` IPC in flight.
+   *   questioned  — Step 2 ready (questionnaire cached).
+   *   proposing   — `enrich:propose` IPC in flight.
+   *   proposed    — Step 3 ready (grounded proposals cached).
+   *   applying    — `enrich:apply` IPC in flight.
+   *   applied     — Apply succeeded; `enrichAppliedVersion` carries the new
+   *                 CV version for the "CV updated (v{n})" copy.
+   *   error       — last step failed; `enrichError` carries the stable code.
+   */
+  enrichStatus:
+    | 'idle'
+    | 'analyzing'
+    | 'analyzed'
+    | 'questioning'
+    | 'questioned'
+    | 'proposing'
+    | 'proposed'
+    | 'applying'
+    | 'applied'
+    | 'error';
+  enrichReport: StarEnrichWeakBulletReport | null;
+  enrichDoc: StarTailoringDocument | null;
+  enrichQuestionnaire: StarEnrichMetricQuestionnaire | null;
+  enrichAnswers: StarEnrichMetricAnswer[];
+  enrichProposals: StarEnrichProposal[];
+  enrichAccepted: Set<number>;
+  enrichAppliedVersion: number | null;
+  enrichError: { code: StarEnrichErrorCode; message: string } | null;
 }
 
 export const useAppStore = defineStore('app', {
@@ -539,6 +574,15 @@ export const useAppStore = defineStore('app', {
     evalReports: {},
     evalGenerateStates: {},
     webResearchSetting: null,
+    enrichStatus: 'idle',
+    enrichReport: null,
+    enrichDoc: null,
+    enrichQuestionnaire: null,
+    enrichAnswers: [],
+    enrichProposals: [],
+    enrichAccepted: new Set<number>(),
+    enrichAppliedVersion: null,
+    enrichError: null,
   }),
 
   getters: {
@@ -2184,6 +2228,193 @@ export const useAppStore = defineStore('app', {
       const setting = await bridge.acknowledgeWebResearchDisclosure();
       this.webResearchSetting = setting;
       return setting;
+    },
+    /**
+     * ENRICH-006 — Step 1 Analyze. Calls `window.starEnrich.analyze` to run
+     * the ENRICH-001 weak-bullet analyzer over the latest CV. Drives the
+     * Enrich page's analyze loading + error states; on success carries the
+     * report + working TailoringDocument for downstream steps.
+     */
+    async analyzeEnrichment(): Promise<StarEnrichAnalyzeResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starEnrich : undefined;
+      if (!bridge) return undefined;
+      this.enrichStatus = 'analyzing';
+      this.enrichError = null;
+      try {
+        const result = await bridge.analyze();
+        if (result.ok) {
+          this.enrichReport = result.report;
+          this.enrichDoc = result.doc;
+          this.enrichStatus = 'analyzed';
+        } else {
+          this.enrichError = { code: result.code, message: result.error };
+          this.enrichStatus = 'error';
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'analyze failed';
+        this.enrichError = { code: 'LLM_ERROR', message };
+        this.enrichStatus = 'error';
+        return { ok: false, code: 'LLM_ERROR', error: message };
+      }
+    },
+    /**
+     * ENRICH-006 — Step 2 generate questions. Calls
+     * `window.starEnrich.questions` with the prior weak-bullet report.
+     */
+    async generateEnrichmentQuestions(): Promise<
+      StarEnrichQuestionsResult | undefined
+    > {
+      const bridge = typeof window !== 'undefined' ? window.starEnrich : undefined;
+      if (!bridge || !this.enrichReport) return undefined;
+      this.enrichStatus = 'questioning';
+      this.enrichError = null;
+      try {
+        const result = await bridge.questions({ report: this.enrichReport });
+        if (result.ok) {
+          this.enrichQuestionnaire = result.questionnaire;
+          // Reset answers — one entry per question, default to skipped so the
+          // explicit "I don't have that number" semantics are the safe default.
+          this.enrichAnswers = result.questionnaire.questions.map((q) => ({
+            questionId: q.id,
+            status: 'skipped',
+          }));
+          this.enrichStatus = 'questioned';
+        } else {
+          this.enrichError = { code: result.code, message: result.error };
+          this.enrichStatus = 'error';
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'questions failed';
+        this.enrichError = { code: 'LLM_ERROR', message };
+        this.enrichStatus = 'error';
+        return { ok: false, code: 'LLM_ERROR', error: message };
+      }
+    },
+    /**
+     * ENRICH-006 — set / update the answer for one metric-discovery question.
+     * Status flips between `answered` (when value is non-empty) and `skipped`
+     * (when the user clears the input or hits the explicit skip control).
+     */
+    setEnrichAnswer(questionId: string, value: string) {
+      const idx = this.enrichAnswers.findIndex((a) => a.questionId === questionId);
+      const next: StarEnrichMetricAnswer =
+        value.trim().length > 0
+          ? { questionId, status: 'answered', value: value.trim() }
+          : { questionId, status: 'skipped' };
+      if (idx >= 0) this.enrichAnswers[idx] = next;
+      else this.enrichAnswers.push(next);
+    },
+    skipEnrichAnswer(questionId: string) {
+      this.setEnrichAnswer(questionId, '');
+    },
+    /**
+     * ENRICH-006 — Step 3 propose. Calls `window.starEnrich.propose` with the
+     * working doc + weak candidates + questions + user answers; the result
+     * carries the grounded proposals (Epic 9 ProposedChange + reason +
+     * provenance) for the accept/reject diff UI.
+     */
+    async proposeEnrichment(): Promise<StarEnrichProposeResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starEnrich : undefined;
+      if (
+        !bridge ||
+        !this.enrichDoc ||
+        !this.enrichReport ||
+        !this.enrichQuestionnaire
+      ) {
+        return undefined;
+      }
+      this.enrichStatus = 'proposing';
+      this.enrichError = null;
+      try {
+        const result = await bridge.propose({
+          doc: this.enrichDoc,
+          candidates: this.enrichReport.items,
+          questions: this.enrichQuestionnaire.questions,
+          answers: this.enrichAnswers,
+        });
+        if (result.ok) {
+          this.enrichProposals = result.proposals;
+          // Default to accepting every proposal — the user toggles off the
+          // ones they want to reject before Apply (FR / AC4).
+          this.enrichAccepted = new Set(result.proposals.map((_, i) => i));
+          this.enrichStatus = 'proposed';
+        } else {
+          this.enrichError = { code: result.code, message: result.error };
+          this.enrichStatus = 'error';
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'propose failed';
+        this.enrichError = { code: 'LLM_ERROR', message };
+        this.enrichStatus = 'error';
+        return { ok: false, code: 'LLM_ERROR', error: message };
+      }
+    },
+    toggleEnrichAccept(idx: number) {
+      const next = new Set(this.enrichAccepted);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      this.enrichAccepted = next;
+    },
+    /**
+     * ENRICH-006 — Step 3 Apply. Calls `window.starEnrich.apply` with the
+     * accepted ProposedChanges. On success captures the new CV version so the
+     * UI can render "CV updated (v{n})", and refreshes `currentCv` /
+     * `profile` so downstream views (Profile, Dashboard) reflect the new
+     * version without a reload.
+     */
+    async applyEnrichment(): Promise<StarEnrichApplyResult | undefined> {
+      const bridge = typeof window !== 'undefined' ? window.starEnrich : undefined;
+      if (!bridge || !this.enrichDoc) return undefined;
+      const accepted: StarProposedChange[] = [];
+      for (let i = 0; i < this.enrichProposals.length; i += 1) {
+        if (this.enrichAccepted.has(i)) {
+          const p = this.enrichProposals[i];
+          if (p) accepted.push(p.change);
+        }
+      }
+      if (!accepted.length) return undefined;
+      this.enrichStatus = 'applying';
+      this.enrichError = null;
+      try {
+        const result = await bridge.apply({
+          doc: this.enrichDoc,
+          acceptedChanges: accepted,
+        });
+        if (result.ok) {
+          this.enrichAppliedVersion = result.result.cv.version;
+          this.enrichStatus = 'applied';
+          // Refresh CV + profile so the rest of the app reflects the new
+          // version without forcing the user to navigate away.
+          await this.loadProfile().catch(() => {});
+        } else {
+          this.enrichError = { code: result.code, message: result.error };
+          this.enrichStatus = 'error';
+        }
+        return result;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'apply failed';
+        this.enrichError = { code: 'LLM_ERROR', message };
+        this.enrichStatus = 'error';
+        return { ok: false, code: 'LLM_ERROR', error: message };
+      }
+    },
+    /**
+     * ENRICH-006 — reset the enrichment flow back to idle (used when leaving
+     * the page or starting fresh after an Apply).
+     */
+    resetEnrichment() {
+      this.enrichStatus = 'idle';
+      this.enrichError = null;
+      this.enrichReport = null;
+      this.enrichDoc = null;
+      this.enrichQuestionnaire = null;
+      this.enrichAnswers = [];
+      this.enrichProposals = [];
+      this.enrichAccepted = new Set();
+      this.enrichAppliedVersion = null;
     },
     async structureCv(text: string): Promise<StarCvStructureResult | null> {
       const bridge = typeof window !== 'undefined' ? window.starCvStructurer : undefined;

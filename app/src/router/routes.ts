@@ -28,6 +28,9 @@ const routes: RouteRecordRaw[] = [
       // EVAL-006 — Job Evaluation Report view (Epic 14). Reached from the
       // Starred tile's "Eval" CTA.
       { path: 'eval', name: 'eval', component: () => import('pages/EvalReportPage.vue') },
+      // ENRICH-006 — CV Enrichment screen (Epic 13). Reached from the SETUP
+      // sidebar item; drives the 3-step Analyze → Questions → Review flow.
+      { path: 'enrich', name: 'enrich', component: () => import('pages/EnrichPage.vue') },
     ],
   },
 
