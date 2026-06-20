@@ -173,6 +173,33 @@
         </div>
       </div>
 
+      <!-- CV Enrichment -->
+      <h2 class="section-title sec">CV Enrichment</h2>
+      <p class="lead">
+        CV Enrichment is a guided <strong>three-step</strong>
+        <strong>Analyze → Questions → Review</strong> flow that strengthens weak
+        bullets in your existing CV — typically those missing measurable impact
+        ("led a team", "improved performance"). It is a dedicated screen reached
+        from the new <strong>CV Enrichment</strong> sidebar item in the SETUP
+        group, on the <code>/enrich</code> route. The model is
+        <strong>strictly grounded</strong> in what you wrote: when you skip a
+        question or answer <em>"I don't have that number"</em>, the bullet is
+        <strong>minimally reworded</strong>, <strong>never invented</strong> —
+        Star will not fabricate metrics, dates or outcomes that aren't already
+        in your evidence. The Review step reuses the same per-bullet
+        accept/reject diff UI you already know from the Tailor view's Tailored
+        CV tab.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in enrichSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Exporting your draft -->
       <h2 class="section-title sec">Exporting your draft</h2>
       <p class="lead">
@@ -480,6 +507,33 @@ const evalSteps = [
   {
     title: 'Stale reports, Regenerate and Export',
     body: 'Reports cache per job and survive restart. When you edit your CV or Profile, or the underlying job is re-extracted, Star marks the report "may be out of date" and offers Regenerate — a fresh structured call against the current inputs. Export sends the report (Markdown, Word or PDF) through the unified Export menu; Star never submits anything on your behalf.',
+  },
+];
+
+const enrichSteps = [
+  {
+    title: 'Open CV Enrichment from the sidebar',
+    body: 'A new CV Enrichment item in the SETUP group of the sidebar — alongside Profile, Help and Settings — opens the dedicated /enrich screen. The feature needs your CV on file plus a saved OpenRouter key and a chosen default model under Settings → LLM integration; without them the screen tells you exactly what is missing (no CV, no API key, no default model) rather than failing silently.',
+  },
+  {
+    title: 'Step 1 — Analyze surfaces weak bullets with a reason',
+    body: 'Star scans the bullets in your current CV and lists the weak ones — typically those missing a measurable outcome ("led a team", "improved throughput"). Each weak item shows the original sentence and a short reason explaining why it is weak (no metric, vague verb, missing scope), so you know what the next two steps are trying to fix.',
+  },
+  {
+    title: 'Step 2 — Questions, with an explicit skip / "no number" option',
+    body: "For each weak bullet Star generates between two and six short metric-discovery questions — \"how many people?\", \"by what percent?\", \"over what timeframe?\". You answer in your own words in the input below each question. Every question carries an explicit Skip control labelled \"I don't have that number\" — and when you skip, the bullet is minimally reworded rather than invented. The model is never allowed to fabricate a metric, date or outcome that is not already in your evidence.",
+  },
+  {
+    title: 'Step 3 — Review, with per-bullet Accept / Reject',
+    body: 'Step 3 reuses the Epic 9 / Tailor CV diff UI: each proposed change is rendered as a +/~/– line against the current CV with the original on the left and the enriched version on the right. Every change has its own Accept and Reject buttons so you opt in per bullet — Star does not bulk-overwrite your CV. Each row also shows a provenance label ("from your answer" or "minimal reword") so you can see whether the new wording came from a number you gave or from a non-fabricating rewrite.',
+  },
+  {
+    title: "Apply — 'CV updated (v{n})' bumps your CV version",
+    body: 'When you press Apply, Star writes a new versioned CV from your accepted changes and shows the confirmation "CV updated (v{n})", where {n} is the new version number. The previous version is preserved — nothing is silently overwritten — and the Profile screen reflects the new CV as the current one. Existing scores against the previous CV are marked stale so you can re-run Epic 5 scoring against the strengthened CV.',
+  },
+  {
+    title: 'Loading and error states for every async step',
+    body: 'Each of the four async steps (analyze, questions, propose, apply) has its own loading indicator so you can see exactly where Star is in the flow. Errors are surfaced from a code-driven set — NO_API_KEY, NO_DEFAULT_MODEL, NO_CV, MODEL_NOT_CAPABLE, RATE_LIMITED, NETWORK, LLM_ERROR — each with copy that names what is wrong and where to fix it (for example, Settings → LLM integration for a missing key).',
   },
 ];
 
