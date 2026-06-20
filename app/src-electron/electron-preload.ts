@@ -345,6 +345,37 @@ contextBridge.exposeInMainWorld('starWord', {
   reveal: (fullPath: string) => ipcRenderer.invoke('word:reveal', fullPath),
 });
 
+// Job Evaluation Report bridge (EVAL-004 / Epic 14). `generate` runs the
+// EVAL-003 orchestrator (Blocks A/C/D/G + Epic 6 Block-B fallback +
+// EVAL-001 webResearch) and persists via the EVAL-002 store. `get` reads
+// the cached PersistedEvalReport (with the stale flag) or null. Both
+// return a tagged-union result with stable error codes (NO_API_KEY /
+// MODEL_NOT_CAPABLE / RATE_LIMITED / NETWORK / NO_SCORE). `onProgress`
+// streams `eval:progress` events (researching / reviewing / generating /
+// result). `webResearch` exposes the persisted opt-in setting + disclosure
+// copy consumed by EVAL-001.
+interface EvalProgressEventInput {
+  phase: 'researching' | 'reviewing' | 'generating' | 'result' | string;
+  ok?: boolean;
+  code?: string;
+  sourceId?: string;
+}
+
+contextBridge.exposeInMainWorld('starEval', {
+  generate: (sourceId: string) => ipcRenderer.invoke('eval:generate', sourceId),
+  get: (sourceId: string) => ipcRenderer.invoke('eval:get', sourceId),
+  onProgress: (cb: (event: EvalProgressEventInput) => void) => {
+    const listener = (_event: unknown, evt: EvalProgressEventInput) => cb(evt);
+    ipcRenderer.on('eval:progress', listener);
+    return () => ipcRenderer.removeListener('eval:progress', listener);
+  },
+  getWebResearchSetting: () => ipcRenderer.invoke('webResearch:getSetting'),
+  setWebResearchEnabled: (enabled: boolean) =>
+    ipcRenderer.invoke('webResearch:setEnabled', enabled),
+  acknowledgeWebResearchDisclosure: () =>
+    ipcRenderer.invoke('webResearch:acknowledgeDisclosure'),
+});
+
 // External shell bridge (JOBDET-001). Opens http/https URLs in the user's OS
 // default browser. Distinct from `starBoard.open` (which navigates the
 // embedded Discover browser via `view:open`). The main-process handler

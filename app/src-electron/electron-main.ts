@@ -50,6 +50,16 @@ import {
   registerExtractVisibleIpc,
   EXTRACT_VISIBLE_PROGRESS_CHANNEL,
 } from './extractVisibleJobIpc';
+import { createEvalReportsStore } from './evalReports';
+import { createWebResearchSettingsStore } from './webResearchSettings';
+import { createWebResearch } from './webResearch';
+import {
+  registerEvalIpc,
+  EVAL_PROGRESS_CHANNEL,
+  markAllEvalReportsStale,
+  markEvalReportStale,
+  type EvalProgressEvent,
+} from './evalIpc';
 import {
   createScoringRunner,
   isScoringRelevantProfileChange,
@@ -158,6 +168,13 @@ function createWindow() {
   // underlying CV/Profile changes or the job is re-extracted.
   const tailoredDocsStore = createTailoredDocsStore(sitesDb);
 
+  // EVAL-004 / Epic 14: persisted eval-reports store + web-research opt-in
+  // settings store. Created here (alongside the other narrative stores) so
+  // the mark-stale hooks below have a stable handle to flip cached reports
+  // stale on CV / Profile / re-extract.
+  const evalReportsStore = createEvalReportsStore(sitesDb);
+  const webResearchSettingsStore = createWebResearchSettingsStore(sitesDb);
+
   // Wire the persisted jobs store (EXTR-003). Created here (earlier than its
   // historical position) so the mark-stale review hooks below have a stable
   // handle to enumerate known sourceIds with.
@@ -189,6 +206,11 @@ function createWindow() {
       // (skills, target role). Flip every cached tailored draft stale so the
       // UI offers a regenerate; the prior draft is preserved.
       markAllTailoredDocsStale(tailoredDocsStore, jobsStore);
+      // EVAL-004 / AC4: Profile changes can shift Block A (target role,
+      // skills) and Block C (level + strategy). Flip every cached eval
+      // report stale so the UI offers a regenerate; the prior narrative
+      // (blocks A/C/D/G) is preserved alongside.
+      markAllEvalReportsStale(evalReportsStore, jobsStore);
       return next;
     },
   };
@@ -213,6 +235,10 @@ function createWindow() {
       // TAILOR-004 / FR-016: a new CV version invalidates the per-job tailored
       // drafts (they were grounded in a prior CV). Flag stale; preserve content.
       markAllTailoredDocsStale(tailoredDocsStore, jobsStore);
+      // EVAL-004 / AC4: a new CV invalidates Block B (Match-with-CV) which
+      // the eval report references — flip every eval report stale so the
+      // regenerate path picks up the new CV's narrative.
+      markAllEvalReportsStale(evalReportsStore, jobsStore);
       return rec;
     },
     list: (profileId) => cvStore.list(profileId),
@@ -224,6 +250,9 @@ function createWindow() {
       markAllReviewsStale(matchReviewsStore, jobsStore);
       // TAILOR-004 / FR-016: clearing the CV invalidates every cached draft.
       markAllTailoredDocsStale(tailoredDocsStore, jobsStore);
+      // EVAL-004 / AC4: clearing the CV invalidates Block B and therefore
+      // every cached eval report — flag stale; preserve narrative.
+      markAllEvalReportsStale(evalReportsStore, jobsStore);
       return result;
     },
   };
@@ -392,6 +421,16 @@ function createWindow() {
         } catch {
           // Best-effort: never abort the extract on a stale-marking failure.
         }
+        // EVAL-004 / AC4: a re-extracted JD invalidates the cached eval
+        // narrative (Block A's role summary, Block D's stated comp, etc.).
+        // Flag stale per-id; preserve the prior narrative for the UI.
+        try {
+          for (const id of Array.from(jobsStore.knownSourceIds())) {
+            markEvalReportStale(evalReportsStore, id);
+          }
+        } catch {
+          // Best-effort: never abort the extract on a stale-marking failure.
+        }
       }
     },
   });
@@ -414,6 +453,84 @@ function createWindow() {
       return def?.slug ?? null;
     },
     buildLlm: ({ apiKey, model }) => buildMatchReviewLlm({ apiKey, model }),
+  });
+
+  // Wire the Job Evaluation Report IPC (EVAL-004 / Epic 14). Reuses the
+  // Epic 2 key + default model, the JD (Epic 3 jobs), CV text + Profile
+  // (Epic 4), the deterministic Epic 5 score (forwarded as `rating`), the
+  // Epic 6 review (Block B — generated on the fly when missing, AC4), and
+  // the EVAL-001 webResearch (gated by the persisted `webResearchEnabled`
+  // setting). The store is the EVAL-002 `eval_reports` table; mark-stale
+  // hooks on CV/Profile change + re-extract live in the same blocks below
+  // as the Epic 6 / Epic 7 hooks (AC4).
+  const webResearch = createWebResearch({
+    getSurface: async () => {
+      // EVAL-001 drives the hidden crawler webContents (same partitioned
+      // session as Discover) — keeps cookies / consent state aligned and
+      // does not interrupt the user's foreground browsing.
+      const wc = await ensureCrawler();
+      return {
+        navigate: async (url: string) => {
+          await wc.loadURL(url);
+        },
+        waitForReady: async () => {
+          // Best-effort readiness — the crawler shares Epic 3's settle wait.
+          await new Promise((r) => setTimeout(r, 250));
+        },
+        getText: async (selector?: string) => {
+          const sel = selector ?? 'body';
+          return (await wc.executeJavaScript(
+            `document.querySelector(${JSON.stringify(sel)})?.innerText ?? ''`,
+          )) as string;
+        },
+        getOuterHtml: async (selector?: string) => {
+          const sel = selector ?? 'body';
+          return (await wc.executeJavaScript(
+            `document.querySelector(${JSON.stringify(sel)})?.outerHTML ?? ''`,
+          )) as string;
+        },
+        currentUrl: () => wc.getURL(),
+      };
+    },
+    isEnabled: () => webResearchSettingsStore.get().webResearchEnabled,
+    isDisclosureAcknowledged: () =>
+      webResearchSettingsStore.get().disclosureAcknowledged,
+    acknowledgeDisclosure: () => {
+      webResearchSettingsStore.acknowledgeDisclosure();
+    },
+    setEnabled: (v: boolean) => {
+      webResearchSettingsStore.setEnabled(v);
+    },
+  });
+  const emitEvalProgress = (event: EvalProgressEvent) => {
+    mainWindow?.webContents.send(EVAL_PROGRESS_CHANNEL, event);
+  };
+  registerEvalIpc(ipcMain, {
+    store: evalReportsStore,
+    matchScoresStore,
+    matchReviewsStore,
+    jobsStore,
+    cvStore: cvStoreWithReviewStaleHook,
+    getProfile: () => profileStore.get(),
+    getApiKey: () => apiKeyStore.getRawKey(),
+    getDefaultModel: () => {
+      const models = preferredModelsStore.list();
+      const def = models.find((m) => m.isDefault);
+      return def?.slug ?? null;
+    },
+    buildLlm: async ({ apiKey, model }) => {
+      const built = await buildTailorLlm({ apiKey, model });
+      if (!built.ok) {
+        const err = built as unknown as { error: string };
+        throw new Error(err.error);
+      }
+      return built.llm as unknown as import('./evalReport').EvalReportLLM;
+    },
+    buildMatchReviewLlm: ({ apiKey, model }) =>
+      buildMatchReviewLlm({ apiKey, model }),
+    webResearch,
+    settingsStore: webResearchSettingsStore,
+    emitProgress: emitEvalProgress,
   });
 
   // Wire the Tailor IPC (TAILOR-004 / Epic 7 §8). Reuses the Epic 2 key +

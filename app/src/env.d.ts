@@ -816,6 +816,86 @@ interface StarWordApi {
   reveal: (fullPath: string) => Promise<void>;
 }
 
+/** A single researched source cited in a Job Evaluation Report (EVAL-002 /
+ *  EVAL-003 / Epic 14). */
+interface EvalSource {
+  title: string;
+  url: string;
+  /** Optional short excerpt or note explaining what the source contributed. */
+  snippet?: string;
+}
+
+/** Persisted Job Evaluation Report (EVAL-002 / Epic 14). Narrative-only — by
+ *  construction there is NO score / number / percentage / star field anywhere
+ *  in this shape (Epic 6 hard boundary). Block B (match-with-CV) is NOT in
+ *  this shape; it is referenced from `match_reviews` by the same `sourceId`. */
+interface EvalReport {
+  sourceId: string;
+  blockA: string;
+  blockC: string;
+  blockD: string;
+  blockG: string;
+  blockH: string;
+  sources: EvalSource[];
+  legitimacyVerdict: string;
+  verificationNote: string;
+  modelSlug?: string;
+  generatedAt: number;
+  /** True when the cached report may be out of date (CV / Profile changed or
+   *  the job was re-extracted since generation). Narrative is still viewable;
+   *  a regenerate is offered alongside. */
+  stale: boolean;
+}
+
+/** Stable failure codes returned by eval:generate (EVAL-004). Mirrors
+ *  `EvalErrorCode` in src-electron/evalIpc.ts. */
+type StarEvalErrorCode =
+  | 'NO_API_KEY'
+  | 'MODEL_NOT_CAPABLE'
+  | 'RATE_LIMITED'
+  | 'NETWORK'
+  | 'NO_SCORE';
+
+type StarEvalGenerateResult =
+  | { ok: true; report: EvalReport; rating: number }
+  | { ok: false; code: StarEvalErrorCode; error: string };
+
+/** Progress event streamed via `eval:progress` (EVAL-004). */
+interface StarEvalProgressEvent {
+  phase: 'researching' | 'reviewing' | 'generating' | 'result' | string;
+  ok?: boolean;
+  code?: StarEvalErrorCode;
+  sourceId?: string;
+}
+
+/** Persisted web-research opt-in settings (EVAL-004). Returned by
+ *  `getWebResearchSetting` alongside the verbatim disclosure copy so the
+ *  renderer's disclosure dialog stays in sync with the engineering-level
+ *  guarantee (local-only, partitioned session, no extra API key, content
+ *  treated as untrusted). */
+interface StarWebResearchSetting {
+  webResearchEnabled: boolean;
+  disclosureAcknowledged: boolean;
+  disclosure: string;
+}
+
+/** Bridge exposed by src-electron/electron-preload.ts for the Job Evaluation
+ *  Report (EVAL-004 / Epic 14). `generate` runs the EVAL-003 orchestrator
+ *  (Blocks A/C/D/G + Epic 6 Block-B fallback + EVAL-001 webResearch) and
+ *  persists via the EVAL-002 store. `get` reads the cached PersistedEvalReport
+ *  (with the stale flag) or null. `onProgress` streams researching / reviewing
+ *  / generating / result phases. `getWebResearchSetting` / `setWebResearchEnabled`
+ *  / `acknowledgeWebResearchDisclosure` expose the persisted opt-in toggle
+ *  consumed by EVAL-001. */
+interface StarEvalApi {
+  generate: (sourceId: string) => Promise<StarEvalGenerateResult>;
+  get: (sourceId: string) => Promise<EvalReport | null>;
+  onProgress: (cb: (event: StarEvalProgressEvent) => void) => () => void;
+  getWebResearchSetting: () => Promise<StarWebResearchSetting>;
+  setWebResearchEnabled: (enabled: boolean) => Promise<StarWebResearchSetting>;
+  acknowledgeWebResearchDisclosure: () => Promise<StarWebResearchSetting>;
+}
+
 interface Window {
   starWindow?: StarWindowApi;
   starBrowser?: StarBrowserApi;
@@ -837,4 +917,5 @@ interface Window {
   starTailorEngine?: StarTailorEngineApi;
   starPdf?: StarPdfApi;
   starWord?: StarWordApi;
+  starEval?: StarEvalApi;
 }
