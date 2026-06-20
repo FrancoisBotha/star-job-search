@@ -30,6 +30,7 @@ codebase are reimplemented in our own words.
 | `generate-pdf.mjs` | concept of a sandboxed, offline LaTeX-compile pipeline driving the engine via a child process | `app/src-electron/pdfExport.ts`, `app/src-electron/pdfExport/latexEngine.ts` — independently implemented |
 | `generate-latex.mjs` | concept of pre-compile structural validation before invoking the engine | `app/src-electron/pdfExport/templates.ts` (`validateLatexBuild`); independently implemented |
 | `templates/cv-template.tex` (the existence of) | confirmed that an ATS-safe single-column LaTeX template is the right shape | `app/src-electron/pdfExport/templates.ts` — template authored from scratch against our own ATS rules |
+| career-ops "Match with CV / Compensation / Legitimacy" concept | structural idea of an A–H qualitative evaluation report for a single job | Epic 14 (Job Evaluation Report) — A–H blocks reimplemented from first principles; **emit no number** is enforced independently by the Zod schemas, the system framings, and the `eval_reports` table layout in `docs/Data Model/EvalReport.md` |
 
 Because we **adapt the structure, copy none of its text / prompts / code,
 and emit no number**, no career-ops file is reproduced inside this

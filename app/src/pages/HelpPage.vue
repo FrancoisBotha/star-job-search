@@ -146,6 +146,33 @@
         </div>
       </div>
 
+      <!-- Job evaluation report -->
+      <h2 class="section-title sec">Job evaluation report</h2>
+      <p class="lead">
+        The <strong>Job evaluation report</strong> is an on-demand, eight-block qualitative
+        read of a single posting — <strong>A · Role Summary &amp; Employer Context</strong>,
+        <strong>B · Match with CV (AI Match Review)</strong>,
+        <strong>C · Level &amp; Strategy</strong>, <strong>D · Compensation</strong>,
+        <strong>E · Tailored CV</strong>, <strong>F · Interview Prep</strong>,
+        <strong>G · Legitimacy Signals</strong> and
+        <strong>H · Cover Letter &amp; Apply</strong>. The report is <strong>advisory</strong>
+        and sits <strong>alongside</strong> the deterministic Epic 5 star rating — never
+        replaces it. The <strong>deterministic 1–5 stars carry the rating</strong>, the report
+        <strong>emits no number, score, star or percentage</strong> of its own (words only),
+        and the stars in the report header are read straight from the same scorer that backs
+        the Job Board — so they stay <strong>authoritative</strong> and reproducible even
+        when OpenRouter is down.
+      </p>
+      <div class="card card--rows">
+        <div v-for="(step, i) in evalSteps" :key="i" class="step">
+          <span class="step__num font-serif">{{ i + 1 }}</span>
+          <div>
+            <div class="step__title">{{ step.title }}</div>
+            <div class="step__sub">{{ step.body }}</div>
+          </div>
+        </div>
+      </div>
+
       <!-- Exporting to PDF -->
       <h2 class="section-title sec">Exporting to PDF</h2>
       <p class="lead">
@@ -397,6 +424,41 @@ const tailorSteps = [
   {
     title: 'Stale drafts and Regenerate',
     body: 'Drafts cache per job and survive restart. When you edit your CV or Profile, or the underlying job is re-extracted, Star marks the draft as may be out of date and surfaces a Regenerate button — a fresh structured call against the current inputs. If something goes wrong (no key, no default model, model not capable of structured output, rate limit or network error) the banner explains exactly which code fired and offers Try again when it makes sense.',
+  },
+];
+
+const evalSteps = [
+  {
+    title: 'Open the Eval report from Starred',
+    body: 'Every job on Starred matches has an Eval button. Click it to open the Job evaluation report for that posting — the eight A–H blocks are collapsible so you can focus on the ones that matter most. The header shows the same deterministic stars the Job Board shows, plus a legitimacy badge and a short verification note.',
+  },
+  {
+    title: 'The deterministic Epic 5 stars carry the rating',
+    body: 'The 1–5 stars and the 0–100 % match in the header come from the same local, deterministic scorer that lives entirely in the app — the Eval report itself emits no number, score, star or percentage. The eight A–H blocks are narrative-only: the stars remain the only authoritative rating, and the same inputs always produce the same answer.',
+  },
+  {
+    title: 'Read the A–H blocks',
+    body: 'Block A is the role summary and employer context. Block B reuses your existing AI Match Review (requirements, gaps, strengths). Block C is the level and application strategy. Block D compares the listing\'s stated compensation against your expectation, and adds a short market-band sentence with cited sources when web research is on. Block G surfaces legitimacy signals — a verdict of legitimate / suspicious / unknown and a verification note. Blocks E, F and H are CTAs into Tailoring, Interview Prep, and Cover Letter & Apply respectively.',
+  },
+  {
+    title: 'Web research is opt-in, off by default, and local-only',
+    body: 'Blocks A, D and G can optionally enrich their narrative with researched web text — employer context, market band, legitimacy signals. The Enable web research setting under Settings → Privacy is off by default and stored locally on this device; it never leaves the app. With it off, the report still generates, but Blocks D & G degrade to "as stated in the listing" and say so verbatim — nothing is silently inferred.',
+  },
+  {
+    title: 'One-time "what is sent" disclosure',
+    body: 'The first time you turn web research on and generate a report, Star shows a one-time disclosure of exactly what is sent and to which destinations: the search query and the URLs visited go to the search engine and the employer pages reached through the same embedded browser you use for Discover. Research only proceeds once you accept it.',
+  },
+  {
+    title: 'Star reuses the same embedded browser — no new egress',
+    body: 'Web research uses the shared webResearch capability, which drives the same embedded browser that already powers Discover and AI Extract, in the same partitioned session. There is no extra API key, no external HTTP API, and no new egress destination beyond what you already accepted for Discover and OpenRouter. Sources are recorded with the report so you can click through to verify them.',
+  },
+  {
+    title: 'Anti-bot, CAPTCHA and login walls — Star never bypasses',
+    body: 'If a search engine or employer page shows a CAPTCHA, login wall, paywall, or anti-bot interstitial, Star detects it and stops for that page — it never attempts to bypass it. Block G\'s legitimacy verdict becomes "unknown" with an "uncertain" note explaining what could not be verified, and Block D drops the market sentence and stays JD-stated only. The report is honest about what it could not check.',
+  },
+  {
+    title: 'Stale reports, Regenerate and Export',
+    body: 'Reports cache per job and survive restart. When you edit your CV or Profile, or the underlying job is re-extracted, Star marks the report "may be out of date" and offers Regenerate — a fresh structured call against the current inputs. Export sends the report (Markdown, Word or PDF) through the unified Export menu; Star never submits anything on your behalf.',
   },
 ];
 

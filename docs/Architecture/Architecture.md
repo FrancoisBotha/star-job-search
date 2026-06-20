@@ -252,6 +252,102 @@ The conceptual-inspiration entry, the Apache-2.0 attribution boilerplate, and
 the rule for upgrading the entry if any code is ever ported live in `NOTICE.md`
 §4 (Resume-Matcher).
 
+## 3d. Job Evaluation Report Subsystem (Epic 14)
+
+Epic 14 (Job Evaluation Report) turns the Job-detail surface into a full
+qualitative read of a single posting — eight collapsible blocks (A–H) that sit
+**alongside** the deterministic Epic 5 rating and the Epic 6 narrative review,
+never replacing them. Like §3a–§3c, it lives entirely in main and reuses —
+rather than forks — the two existing egress paths.
+
+- **A–H block composition.** The report is a fixed eight-block layout:
+  **Block A** — *Role Summary & Employer Context* (LLM narrative, optionally
+  enriched by web research);
+  **Block B** — *Match with CV* (the Epic 6 AI Match Review, read from
+  `match_reviews` or generated on demand and cached there — Epic 14 does
+  not store Block B inside `eval_reports`);
+  **Block C** — *Level & Strategy* (LLM narrative);
+  **Block D** — *Compensation* (LLM narrative comparing the JD-stated band
+  against the user's expectation, plus a market-band sentence with cited
+  sources when web research is on);
+  **Block E** — *Tailored CV* CTA that deep-links into the Epic 7 Tailor view;
+  **Block F** — *Interview Prep* CTA that deep-links into the Tailor view
+  with `focus=interview-prep`;
+  **Block G** — *Legitimacy Signals* (LLM narrative + `legitimacyVerdict ∈
+  {legitimate, suspicious, unknown}` + best-effort `verificationNote`);
+  **Block H** — *Cover Letter & Apply* (CTA + optional narrative).
+- **Deterministic-stars-as-rating rule.** The Eval report **emits no
+  number, score, star, percentage, or any quantitative fit signal**. The
+  authoritative rating remains the Epic 5 deterministic 1–5 stars + 0–100 %
+  match — the orchestrator reads them from `match_scores` and forwards them
+  to the header for display, never produces them. Block B reuses Epic 6's
+  no-number guarantee verbatim; Blocks A/C/D/G are independently constrained
+  by their Zod schemas (no numeric fields by construction) and by a
+  hard-rule system framing on every LLM call. `eval_reports` has no score
+  column for the same reason — the data model cannot accidentally surface a
+  number even if a future block tried to emit one. This keeps the property
+  that scoring is reproducible and survives OpenRouter being down: the rating
+  comes from a pure function over `(listing, profile, weights)`, never from
+  the LLM.
+- **Shared `webResearch` capability (EVAL-001).** Blocks A/D/G optionally
+  enrich their narrative with researched web text. Research goes through a
+  single shared `webResearch` module in main exposing `search(query)` and
+  `fetchUrl(url)`, driving the existing embedded `BrowserView` (Epic 1) or
+  the Epic 3 hidden crawler in the same partitioned `persist:job-browser`
+  session. **No external HTTP API and no extra API key.** Extracted text is
+  passed through the existing prompt-injection sanitizer — fetched web
+  content is UNTRUSTED data, never instructions. Sources travel through
+  `eval_reports.sources` so the UI can cite them.
+- **Opt-in, default-OFF, local-only `webResearchEnabled` setting +
+  one-time disclosure.** Web research is **off by default** and gated by a
+  local-only `webResearchEnabled` setting that lives in `settings` and
+  never leaves the device. Two gates run before any browser navigation:
+  (1) when the setting is OFF, `webResearch` returns
+  `{ ok: false, code: 'research_disabled' }` and nothing is fetched; (2) the
+  first call after enabling shows a one-time "what is sent" disclosure and
+  returns `{ ok: false, code: 'disclosure_required' }` until the user
+  acknowledges it. With research off, Blocks D & G degrade to JD-stated-only
+  and say so verbatim in their narrative; the report is still produced.
+- **Anti-bot-no-bypass rule.** Logins, paywalls, CAPTCHAs, and anti-bot
+  interstitials are **detected and stopped, never bypassed** — the same
+  permanent product non-goal that governs Epic 1 (FR-SCAN-010) and Epic 3
+  applies here unchanged. When `webResearch` matches a challenge marker on
+  page text or HTML it returns `{ ok: true, uncertain: true, reason: '…' }`
+  with an empty result set; Block G's `verificationNote` carries that
+  `unknown` verdict through to the persisted report, and Block D falls back
+  to JD-stated comp without a market sentence.
+- **No new egress path — the two-egress boundary in §3 is unchanged.**
+  The egress relaxation that lets the Eval report reach search engines and
+  employer pages is **scoped to this epic**: it stays within the same
+  embedded browser surface (the Epic 1 visible view + the Epic 3 hidden
+  crawler), in the same partitioned `persist:job-browser` session, behind
+  the opt-in setting + one-time disclosure described above. The PRD's
+  egress posture (NFR-S5) is not relaxed; the relaxation is documented
+  here and in `docs/Data Model/EvalReport.md` rather than in the PRD.
+
+**Dependencies on earlier epics — load-bearing, not optional:**
+
+- **Epic 1 (Embedded Job-Site Browser).** Supplies the `BrowserView`, the
+  partitioned session, and the preload bridge `webResearch` drives.
+- **Epic 3 (Agentic Job Extraction).** Supplies the hidden crawler the
+  shared `webResearch` module retargets onto when a research run needs to
+  navigate without disturbing the Discover view; supplies the prompt
+  sanitizer applied to all extracted text.
+- **Epic 5 (Job Match Scoring).** Provides the deterministic rating
+  surfaced in the report header — the Eval report never recomputes or
+  overrides the stars.
+- **Epic 6 (AI Match Review).** Provides Block B and the "no number,
+  grounding, JD-as-untrusted-data" framing reused by Blocks A/C/D/G.
+- **Epic 7 (Tailoring) + Epic 8 (PDF Export) + Epic 12 (Unified Export).**
+  Blocks E, F, H are CTAs into those flows; the Eval report itself does
+  not draft, tailor, or export.
+
+**Data model.** Full table shape, the A–H persistence layout,
+`legitimacyVerdict`, the `sources` array, and the no-score-column
+guarantee live in `docs/Data Model/EvalReport.md`. The conceptual
+attribution for the A–H structural idea — career-ops (MIT), no text or
+code copied, no number emitted — lives in `NOTICE.md` §1 (career-ops).
+
 ## 4. Key Decisions
 
 - **Electron, not Tauri/native:** the product *needs* an embedded browser to scan
